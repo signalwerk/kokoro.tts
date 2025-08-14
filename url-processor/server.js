@@ -8,15 +8,23 @@ import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { htmlToText } from './htmlToText.js';
 
 dotenv.config();
 
+const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR ||  '/kokoro/data';
 const URLS_FILE = path.join(DATA_DIR, 'urls.json');
 const KOKORO_API_URL = process.env.KOKORO_API_URL || 'http://localhost:5173/api/v1';
+
+// Audio processing configuration
+const AUDIO_CONFIG = {
+  silenceDuration: parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2
+};
 
 // Initialize OpenAI client for Kokoro TTS
 const openai = new OpenAI({
@@ -343,8 +351,23 @@ async function generateTtsAudio(url, urlDir, textChunks) {
     
     console.log(`Generated ${chunkFiles.length} audio chunks. Concatenating with silence gaps...`);
     
-    // Create concatenated audio with 200ms silence gaps
-    await concatenateAudioWithSilence(chunkFiles, audioPath);
+    // Validate that all chunk files exist before concatenation
+    const validChunkFiles = [];
+    for (const chunkFile of chunkFiles) {
+      try {
+        await fs.access(chunkFile);
+        validChunkFiles.push(chunkFile);
+      } catch (error) {
+        console.warn(`Chunk file not found, skipping: ${chunkFile}`);
+      }
+    }
+    
+    if (validChunkFiles.length === 0) {
+      throw new Error('No valid audio chunks found for concatenation');
+    }
+    
+    // Create concatenated audio with configurable silence gaps
+    await concatenateAudioWithSilence(validChunkFiles, audioPath, AUDIO_CONFIG);
     
     // Complete and clean up progress tracking
     delete audioProgress[hash];
@@ -360,7 +383,11 @@ async function generateTtsAudio(url, urlDir, textChunks) {
 }
 
 // Function to concatenate audio files with silence gaps
-async function concatenateAudioWithSilence(chunkFiles, outputPath) {
+async function concatenateAudioWithSilence(chunkFiles, outputPath, options = {}) {
+  const { 
+    silenceDuration = 0.2 // seconds
+  } = options;
+  
   if (chunkFiles.length === 0) {
     throw new Error('No audio chunks to concatenate');
   }
@@ -371,29 +398,67 @@ async function concatenateAudioWithSilence(chunkFiles, outputPath) {
     return;
   }
   
-  // For concatenation, we'll use a simple approach by reading all files
-  // and creating a basic concatenated MP3
-  // Note: This is a simplified approach. For production, you might want to use ffmpeg
-  const buffers = [];
-  
-  for (let i = 0; i < chunkFiles.length; i++) {
-    // Read the audio file
-    const audioBuffer = await fs.readFile(chunkFiles[i]);
-    buffers.push(audioBuffer);
-    
-    // Add silence gap (except for the last file)
-    if (i < chunkFiles.length - 1) {
-      // Create a simple 200ms silence buffer
-      // This is a very basic approach - in production you'd want proper MP3 silence
-      const silenceSize = Math.floor(audioBuffer.length * 0.05); // Rough approximation
-      const silenceBuffer = Buffer.alloc(silenceSize, 0);
-      buffers.push(silenceBuffer);
-    }
+  try {
+    // Check if ffmpeg is available
+    await execAsync('ffmpeg -version');
+  } catch (error) {
+    throw new Error('ffmpeg is required for audio concatenation but is not available. Please install ffmpeg.');
   }
   
-  // Concatenate all buffers
-  const finalBuffer = Buffer.concat(buffers);
-  await fs.writeFile(outputPath, finalBuffer);
+  try {
+    // Create a temporary file list for ffmpeg
+    const tempDir = path.dirname(path.resolve(outputPath));
+    const timestamp = Date.now();
+    const fileListPath = path.join(tempDir, `filelist-${timestamp}.txt`);
+    const silencePath = path.join(tempDir, `silence-${timestamp}.mp3`);
+    
+    // Generate silence with same characteristics as the audio files
+    // We'll create a simple silence MP3 that ffmpeg can handle
+    await execAsync(`ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${silenceDuration} -y "${silencePath}"`);
+    
+    // Create file list for ffmpeg concat - use absolute paths
+    const fileListContent = [];
+    for (let i = 0; i < chunkFiles.length; i++) {
+      const absolutePath = path.resolve(chunkFiles[i]);
+      
+      // Verify file exists before adding to list
+      try {
+        await fs.access(absolutePath);
+        fileListContent.push(`file '${absolutePath}'`);
+        
+        // Add silence between chunks (except after the last one)
+        if (i < chunkFiles.length - 1) {
+          fileListContent.push(`file '${silencePath}'`);
+        }
+      } catch (error) {
+        console.warn(`Skipping missing chunk file: ${absolutePath}`);
+      }
+    }
+    
+    if (fileListContent.length === 0) {
+      throw new Error('No valid chunk files found');
+    }
+    
+    await fs.writeFile(fileListPath, fileListContent.join('\n'));
+    
+    // Concatenate using ffmpeg with copy codec to preserve original encoding
+    const absoluteOutputPath = path.resolve(outputPath);
+    const ffmpegCommand = `ffmpeg -f concat -safe 0 -i "${fileListPath}" -c copy -y "${absoluteOutputPath}"`;
+    await execAsync(ffmpegCommand);
+    
+    // Clean up temporary files
+    try {
+      await fs.unlink(fileListPath);
+      await fs.unlink(silencePath);
+    } catch (cleanupError) {
+      console.warn('Failed to clean up temporary files:', cleanupError);
+    }
+    
+    console.log(`Successfully concatenated ${chunkFiles.length} audio files with ${silenceDuration}s silence gaps`);
+  } catch (error) {
+    console.error('ffmpeg concatenation failed:', error);
+    throw new Error(`Audio concatenation failed: ${error.message}`);
+  }
 }
 
 // Main process URL function that orchestrates all steps
