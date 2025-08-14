@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:22-alpine
 
 # Install ffmpeg for audio processing
 RUN apk add --no-cache ffmpeg
