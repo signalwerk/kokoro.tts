@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' npx jest"
+  },
+  "jest": {
+    "testEnvironment": "node"
   },
   "dependencies": {
     "@mozilla/readability": "^0.4.4",
@@ -19,6 +23,7 @@
     "openai": "^4.20.1"
   },
   "devDependencies": {
+    "jest": "^30.0.5",
     "nodemon": "^3.0.1"
   }
 }
