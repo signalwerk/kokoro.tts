@@ -4,7 +4,7 @@ services:
     ports:
       - "8542:3000"
     environment:
-      - KW_SECRET_API_KEY=${KW_SECRET_API_KEY}
+      - KW_SECRET_API_KEY=test
     volumes:
       - ./DATA/tts/kokoro/cache:/kokoro/cache
     restart: unless-stopped
