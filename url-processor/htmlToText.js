@@ -76,6 +76,42 @@ export function htmlToText(html) {
         return; // Don't process children of p/h elements
       }
       
+      // Handle ordered lists (ol)
+      if (tagName === 'ol') {
+        const listItems = [];
+        $node.children('li').each((index, li) => {
+          const itemText = $(li).text().replace(/\s+/g, ' ').trim();
+          if (itemText) {
+            listItems.push(`${index + 1}. ${itemText}`);
+          }
+        });
+        if (listItems.length > 0) {
+          chunks.push({
+            text: listItems.join('\n'),
+            type: "other"
+          });
+        }
+        return; // Don't process children of ol elements
+      }
+      
+      // Handle unordered lists (ul)
+      if (tagName === 'ul') {
+        const listItems = [];
+        $node.children('li').each((_, li) => {
+          const itemText = $(li).text().replace(/\s+/g, ' ').trim();
+          if (itemText) {
+            listItems.push(`• ${itemText}`);
+          }
+        });
+        if (listItems.length > 0) {
+          chunks.push({
+            text: listItems.join('\n'),
+            type: "other"
+          });
+        }
+        return; // Don't process children of ul elements
+      }
+      
       // For other elements, process children
       $node.contents().each((_, child) => {
         walkNode(child);
@@ -89,31 +125,57 @@ export function htmlToText(html) {
     walkNode(child);
   });
   
-  // Clean up chunks without merging
-  const cleanedChunks = [];
+  // Clean up and merge consecutive "other" chunks
+  const mergedChunks = [];
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    const cleanText = chunk.text.replace(/\s+/g, ' ').trim();
     
-    if (cleanText) {
-      cleanedChunks.push({
+    // Don't clean text that contains newlines (like lists) - preserve formatting
+    let cleanText;
+    if (chunk.text.includes('\n')) {
+      cleanText = chunk.text.trim();
+    } else {
+      cleanText = chunk.text.replace(/\s+/g, ' ').trim();
+    }
+    
+    if (!cleanText) continue;
+    
+    // For p and h elements, always keep separate
+    if (chunk.type === 'p' || chunk.type === 'h') {
+      mergedChunks.push({
         ...chunk,
         text: cleanText
       });
+    } else {
+      // For other elements, merge consecutive ones
+      const lastChunk = mergedChunks[mergedChunks.length - 1];
+      if (lastChunk && lastChunk.type === 'other') {
+        // If either chunk contains newlines, add it on a new line
+        if (chunk.text.includes('\n') || lastChunk.text.includes('\n')) {
+          lastChunk.text += '\n' + cleanText;
+        } else {
+          lastChunk.text += ' ' + cleanText;
+        }
+      } else {
+        mergedChunks.push({
+          ...chunk,
+          text: cleanText
+        });
+      }
     }
   }
   
   // If no chunks were found, fall back to getting all text as a single "other" chunk
-  if (cleanedChunks.length === 0) {
+  if (mergedChunks.length === 0) {
     const allText = $('body').length ? $('body').text() : $.text();
     const cleanText = allText.replace(/\s+/g, ' ').trim();
     if (cleanText) {
-      cleanedChunks.push({
+      mergedChunks.push({
         text: cleanText,
         type: "other"
       });
     }
   }
   
-  return cleanedChunks;
+  return mergedChunks;
 }

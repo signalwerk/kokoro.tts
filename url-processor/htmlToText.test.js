@@ -165,6 +165,15 @@ describe('htmlToText', () => {
           More section text
         </section>
         More outer text
+        <ul>
+          <li>First item</li>
+          <li>Second item</li>
+        </ul>
+        <ol>
+          <li>Numbered first</li>
+          <li>Numbered second</li>
+        </ol>
+        Final text
       </div>
     `;
     
@@ -172,15 +181,7 @@ describe('htmlToText', () => {
     
     expect(result).toEqual([
       {
-        text: "Outer text",
-        type: "other"
-      },
-      {
-        text: "Section text",
-        type: "other"
-      },
-      {
-        text: "Article text",
+        text: "Outer text Section text Article text",
         type: "other"
       },
       {
@@ -188,15 +189,7 @@ describe('htmlToText', () => {
         type: "p"
       },
       {
-        text: "More article text",
-        type: "other"
-      },
-      {
-        text: "More section text",
-        type: "other"
-      },
-      {
-        text: "More outer text",
+        text: "More article text More section text More outer text\n• First item\n• Second item\n1. Numbered first\n2. Numbered second\nFinal text",
         type: "other"
       }
     ]);
@@ -208,23 +201,7 @@ describe('htmlToText', () => {
     
     expect(result).toEqual([
       {
-        text: "Before",
-        type: "other"
-      },
-      {
-        text: "link text",
-        type: "other"
-      },
-      {
-        text: "after",
-        type: "other"
-      },
-      {
-        text: "emphasis",
-        type: "other"
-      },
-      {
-        text: "end",
+        text: "Before link text after emphasis end",
         type: "other"
       }
     ]);
@@ -290,11 +267,7 @@ describe('htmlToText', () => {
         type: "p"
       },
       {
-        text: "Important quote text",
-        type: "other"
-      },
-      {
-        text: "- Famous Person",
+        text: "Important quote text - Famous Person",
         type: "other"
       },
       {
@@ -325,6 +298,107 @@ describe('htmlToText', () => {
       { text: "Level 4", type: "h", level: 4 },
       { text: "Level 5", type: "h", level: 5 },
       { text: "Level 6", type: "h", level: 6 }
+    ]);
+  });
+
+  test('should handle ordered lists with numbering', () => {
+    const html = `
+      <div>
+        Introduction text
+        <ol>
+          <li>First item</li>
+          <li>Second item</li>
+          <li>Third item</li>
+        </ol>
+        Conclusion text
+      </div>
+    `;
+    
+    const result = htmlToText(html);
+    
+    expect(result).toEqual([
+      {
+        text: "Introduction text\n1. First item\n2. Second item\n3. Third item\nConclusion text",
+        type: "other"
+      }
+    ]);
+  });
+
+  test('should handle unordered lists with bullets', () => {
+    const html = `
+      <div>
+        Introduction text
+        <ul>
+          <li>First item</li>
+          <li>Second item</li>
+          <li>Third item</li>
+        </ul>
+        Conclusion text
+      </div>
+    `;
+    
+    const result = htmlToText(html);
+    
+    expect(result).toEqual([
+      {
+        text: "Introduction text\n• First item\n• Second item\n• Third item\nConclusion text",
+        type: "other"
+      }
+    ]);
+  });
+
+  test('should handle mixed lists and other content', () => {
+    const html = `
+      <div>
+        <h1>Shopping Lists</h1>
+        <p>Here are my lists:</p>
+        
+        <h2>Groceries</h2>
+        <ul>
+          <li>Apples</li>
+          <li>Bread</li>
+        </ul>
+        
+        <h2>Tasks</h2>
+        <ol>
+          <li>Buy groceries</li>
+          <li>Clean house</li>
+        </ol>
+        
+        All done!
+      </div>
+    `;
+    
+    const result = htmlToText(html);
+    
+    expect(result).toEqual([
+      {
+        text: "Shopping Lists",
+        type: "h",
+        level: 1
+      },
+      {
+        text: "Here are my lists:",
+        type: "p"
+      },
+      {
+        text: "Groceries",
+        type: "h",
+        level: 2
+      },
+      {
+        text: "• Apples\n• Bread",
+        type: "other"
+      },
+      {
+        text: "Tasks",
+        type: "h",
+        level: 2
+      },
+      {
+        text: "1. Buy groceries\n2. Clean house\nAll done!",
+        type: "other"
+      }
     ]);
   });
 

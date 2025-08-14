@@ -192,10 +192,90 @@ function generateTextHash(text) {
   return crypto.createHash('md5').update(text).digest('hex');
 }
 
+// Store for tracking audio generation progress
+const audioProgress = {};
+
+// Helper function to get processing status for a URL hash
+async function getUrlStatus(hash) {
+  const urlDir = path.join(DATA_DIR, hash);
+  
+  try {
+    // Check which files exist to determine processing status
+    const infoExists = await fs.access(path.join(urlDir, 'info.json')).then(() => true).catch(() => false);
+    const htmlExists = await fs.access(path.join(urlDir, 'html.json')).then(() => true).catch(() => false);
+    const contentExists = await fs.access(path.join(urlDir, 'content.json')).then(() => true).catch(() => false);
+    const textExists = await fs.access(path.join(urlDir, 'text.json')).then(() => true).catch(() => false);
+    const audioExists = await fs.access(path.join(urlDir, 'text.mp3')).then(() => true).catch(() => false);
+    
+    let status = 'not_started';
+    let step = 0;
+    let stepName = 'Not started';
+    let audioProgressInfo = null;
+    
+    if (infoExists) {
+      status = 'processing';
+      step = 1;
+      stepName = 'URL info stored';
+    }
+    if (htmlExists) {
+      step = 2;
+      stepName = 'HTML fetched';
+    }
+    if (contentExists) {
+      step = 3;
+      stepName = 'Content processed';
+    }
+    if (textExists) {
+      step = 4;
+      stepName = 'Text extracted';
+      
+      // Check if we're currently generating audio
+      if (audioProgress[hash]) {
+        step = 5;
+        const progress = audioProgress[hash];
+        if (progress.status === 'generating') {
+          stepName = `Generating audio (${progress.currentChunk}/${progress.totalChunks})`;
+        } else if (progress.status === 'concatenating') {
+          stepName = 'Concatenating audio files';
+        }
+        audioProgressInfo = progress;
+      }
+    }
+    if (audioExists) {
+      status = 'completed';
+      step = 5;
+      stepName = 'Audio generated';
+    }
+    
+    const response = {
+      status,
+      step,
+      stepName,
+      totalSteps: 5,
+      progress: Math.round((step / 5) * 100)
+    };
+    
+    if (audioProgressInfo) {
+      response.audioProgress = audioProgressInfo;
+    }
+    
+    return response;
+  } catch (error) {
+    return {
+      status: 'not_started',
+      step: 0,
+      stepName: 'Not started',
+      totalSteps: 5,
+      progress: 0
+    };
+  }
+}
+
 // Step 5: Generate TTS audio
 async function generateTtsAudio(url, urlDir, textChunks) {
   const audioPath = path.join(urlDir, 'text.mp3');
   const chunksDir = path.join(urlDir, 'chunks');
+  const hash = generateHash(url);
   
   try {
     await fs.access(audioPath);
@@ -216,6 +296,13 @@ async function generateTtsAudio(url, urlDir, textChunks) {
     
     console.log(`Generating TTS for ${textChunks.length} chunks for: ${url}`);
     
+    // Initialize progress tracking
+    audioProgress[hash] = {
+      currentChunk: 0,
+      totalChunks: textChunks.length,
+      status: 'generating'
+    };
+    
     const chunkFiles = [];
     
     // Process each chunk
@@ -223,6 +310,9 @@ async function generateTtsAudio(url, urlDir, textChunks) {
       const chunk = textChunks[i];
       const chunkHash = generateTextHash(chunk.text);
       const chunkPath = path.join(chunksDir, `${chunkHash}.mp3`);
+      
+      // Update progress
+      audioProgress[hash].currentChunk = i + 1;
       
       try {
         // Check if chunk audio already exists
@@ -248,14 +338,22 @@ async function generateTtsAudio(url, urlDir, textChunks) {
       chunkFiles.push(chunkPath);
     }
     
+    // Update progress to concatenating
+    audioProgress[hash].status = 'concatenating';
+    
     console.log(`Generated ${chunkFiles.length} audio chunks. Concatenating with silence gaps...`);
     
     // Create concatenated audio with 200ms silence gaps
     await concatenateAudioWithSilence(chunkFiles, audioPath);
     
+    // Complete and clean up progress tracking
+    delete audioProgress[hash];
+    
     console.log(`Generated final TTS audio for: ${url}`);
     return { success: true, skipped: false };
   } catch (error) {
+    // Clean up progress tracking on error
+    delete audioProgress[hash];
     console.error(`Error generating TTS for ${url}:`, error);
     return { success: false, error: error.message };
   }
@@ -458,6 +556,30 @@ app.get('/api/processed/:hash', async (req, res) => {
     });
   } catch (error) {
     res.status(404).json({ error: 'Processed data not found' });
+  }
+});
+
+// Get processing status for a URL
+app.get('/api/status/:hash', async (req, res) => {
+  const { hash } = req.params;
+  const status = await getUrlStatus(hash);
+  res.json(status);
+});
+
+// Get status for all URLs
+app.get('/api/status-all', async (req, res) => {
+  try {
+    const urls = await loadUrls();
+    const statuses = {};
+    
+    for (const url of urls) {
+      const hash = generateHash(url);
+      statuses[url] = await getUrlStatus(hash);
+    }
+    
+    res.json(statuses);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get status' });
   }
 });
 

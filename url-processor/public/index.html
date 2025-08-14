@@ -97,10 +97,65 @@
             border-left: 4px solid #007bff;
         }
         
-        .url-text {
+        .url-content {
             flex: 1;
-            word-break: break-all;
             margin-right: 15px;
+        }
+        
+        .url-text {
+            word-break: break-all;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        .url-status {
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status-not-started { background-color: #6c757d; }
+        .status-processing { background-color: #ffc107; animation: pulse 1.5s infinite; }
+        .status-completed { background-color: #28a745; }
+        .status-error { background-color: #dc3545; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .progress-bar {
+            width: 100px;
+            height: 4px;
+            background-color: #e9ecef;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-right: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+            border-radius: 2px;
+        }
+        
+        .progress-fill.completed {
+            background-color: #28a745;
+        }
+        
+        .progress-fill.processing {
+            background-color: #ffc107;
         }
         
         .url-actions {
@@ -126,6 +181,12 @@
         
         .view-btn:hover {
             background: #138496;
+        }
+        
+        .view-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
         }
         
         .empty-state {
@@ -242,11 +303,59 @@
     
     <script>
         let urls = [];
+        let urlStatuses = {};
+        let statusInterval = null;
         
         // Load URLs on page load
         window.onload = function() {
             loadUrls();
+            startStatusPolling();
         };
+        
+        // Clean up when page is closed
+        window.onbeforeunload = function() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        };
+        
+        // Start polling for status updates
+        function startStatusPolling() {
+            // Clear any existing interval
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+            
+            // Poll every 1 second for more real-time updates during audio generation
+            statusInterval = setInterval(async () => {
+                if (urls.length > 0) {
+                    await updateAllStatuses();
+                    
+                    // Check if any URL is currently generating audio
+                    const hasAudioGeneration = Object.values(urlStatuses).some(status => 
+                        status.audioProgress && status.audioProgress.status === 'generating'
+                    );
+                    
+                    // If audio is being generated, poll more frequently
+                    if (hasAudioGeneration) {
+                        // Already polling every 1 second, which is good for audio generation
+                    }
+                }
+            }, 8000);
+        }
+        
+        // Update status for all URLs
+        async function updateAllStatuses() {
+            try {
+                const response = await fetch('/api/status-all');
+                if (response.ok) {
+                    urlStatuses = await response.json();
+                    renderUrls();
+                }
+            } catch (error) {
+                console.error('Error updating statuses:', error);
+            }
+        }
         
         // Show status message
         function showStatus(message, type = 'info') {
@@ -262,7 +371,13 @@
             try {
                 const response = await fetch('/api/urls');
                 urls = await response.json();
-                renderUrls();
+                
+                // Also load initial statuses
+                if (urls.length > 0) {
+                    await updateAllStatuses();
+                } else {
+                    renderUrls();
+                }
             } catch (error) {
                 showStatus('Error loading URLs: ' + error.message, 'error');
             }
@@ -292,7 +407,10 @@
                 if (response.ok) {
                     urlInput.value = '';
                     showStatus('URL added successfully! Processing will start automatically.', 'success');
-                    loadUrls();
+                    await loadUrls();
+                    
+                    // Immediately start tracking status for new URL
+                    await updateAllStatuses();
                 } else {
                     showStatus('Error: ' + result.error, 'error');
                 }
@@ -303,7 +421,9 @@
         
         // Delete URL
         async function deleteUrl(index) {
-            if (!confirm('Are you sure you want to delete this URL?')) {
+            const urlToDelete = urls[index];
+            
+            if (!confirm(`Are you sure you want to delete this URL?\n\n${urlToDelete}\n\nThis will also delete all processed data for this URL.`)) {
                 return;
             }
             
@@ -315,8 +435,12 @@
                 const result = await response.json();
                 
                 if (response.ok) {
-                    showStatus('URL deleted successfully', 'success');
-                    loadUrls();
+                    showStatus('URL and all associated data deleted successfully', 'success');
+                    
+                    // Remove from local status tracking
+                    delete urlStatuses[urlToDelete];
+                    
+                    await loadUrls();
                 } else {
                     showStatus('Error deleting URL: ' + result.error, 'error');
                 }
@@ -429,15 +553,53 @@
                 return;
             }
             
-            container.innerHTML = urls.map((url, index) => `
-                <div class="url-item">
-                    <div class="url-text">${url}</div>
-                    <div class="url-actions">
-                        <button class="view-btn" onclick="viewContent('${url}')">👁️ View</button>
-                        <button class="delete-btn" onclick="deleteUrl(${index})">🗑️ Delete</button>
+            container.innerHTML = urls.map((url, index) => {
+                const status = urlStatuses[url] || { 
+                    status: 'not_started', 
+                    step: 0, 
+                    stepName: 'Not started', 
+                    progress: 0 
+                };
+                
+                const statusClass = `status-${status.status}`;
+                const progressClass = status.status === 'completed' ? 'completed' : 
+                                    status.status === 'processing' ? 'processing' : '';
+                
+                // Handle detailed audio progress
+                let displayStepName = status.stepName;
+                let detailedProgress = status.progress;
+                
+                if (status.audioProgress && status.audioProgress.status === 'generating') {
+                    const audioProgress = status.audioProgress;
+                    const chunkProgressPercent = Math.round((audioProgress.currentChunk / audioProgress.totalChunks) * 100);
+                    detailedProgress = 80 + (chunkProgressPercent * 0.2); // Scale to 80-100% for step 5
+                    displayStepName = `Generating audio (${audioProgress.currentChunk}/${audioProgress.totalChunks})`;
+                } else if (status.audioProgress && status.audioProgress.status === 'concatenating') {
+                    detailedProgress = 95;
+                    displayStepName = 'Concatenating audio files';
+                }
+                
+                return `
+                    <div class="url-item">
+                        <div class="url-content">
+                            <div class="url-text">${url}</div>
+                            <div class="url-status">
+                                <span class="status-indicator ${statusClass}"></span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill ${progressClass}" style="width: ${detailedProgress}%"></div>
+                                </div>
+                                <span>${displayStepName} (${Math.round(detailedProgress)}%)</span>
+                            </div>
+                        </div>
+                        <div class="url-actions">
+                            <button class="view-btn" onclick="viewContent('${url}')" ${status.status !== 'completed' ? 'disabled' : ''}>
+                                👁️ View
+                            </button>
+                            <button class="delete-btn" onclick="deleteUrl(${index})">🗑️ Delete</button>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
         
         // Handle Enter key in URL input
