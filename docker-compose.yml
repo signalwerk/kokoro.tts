@@ -4,7 +4,19 @@ services:
     ports:
       - "8542:3000"
     environment:
-      - KW_SECRET_API_KEY=test
+      - KW_SECRET_API_KEY=${KOKORO_API_KEY}
     volumes:
       - ./DATA/tts/kokoro/cache:/kokoro/cache
+    restart: unless-stopped
+
+  url-processor:
+    build: ./url-processor
+    ports:
+      - "3001:3000"
+    environment:
+      - KOKORO_API_URL=${KOKORO_API_URL}
+    volumes:
+      - ./DATA/tts/kokoro/data:/kokoro/data
+    depends_on:
+      - kokoro-web
     restart: unless-stopped

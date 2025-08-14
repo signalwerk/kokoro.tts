@@ -1,1 +1,4 @@
 /.env
+/url-processor/node_modules
+/url-processor/.env
+/DATA
