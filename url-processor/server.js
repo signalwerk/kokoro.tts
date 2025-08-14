@@ -82,31 +82,47 @@ function htmlToText(html) {
   return text;
 }
 
-// Process URL and generate TTS
-async function processUrl(url) {
-  const hash = generateHash(url);
-  const urlDir = path.join(DATA_DIR, hash);
+// Step 1: Create directory and store URL info
+async function storeUrlInfo(url, urlDir) {
+  const infoPath = path.join(urlDir, 'info.json');
   
   try {
-    // Check if directory already exists
-    await fs.access(urlDir);
-    console.log(`URL already processed: ${url}`);
-    return { success: true, message: 'URL already processed', hash };
+    await fs.access(infoPath);
+    console.log(`Info already exists for: ${url}`);
+    return { success: true, skipped: true };
   } catch {
-    // Directory doesn't exist, proceed with processing
+    // File doesn't exist, proceed with creation
   }
   
   try {
-    // Create directory
     await fs.mkdir(urlDir, { recursive: true });
-    
-    // 1. Store URL in info.json
     await fs.writeFile(
-      path.join(urlDir, 'info.json'),
+      infoPath,
       JSON.stringify({ url, processedAt: new Date().toISOString() }, null, 2)
     );
-    
-    // 2. Fetch URL content
+    console.log(`Stored info for: ${url}`);
+    return { success: true, skipped: false };
+  } catch (error) {
+    console.error(`Error storing info for ${url}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Step 2: Fetch URL content and store HTML
+async function fetchAndStoreHtml(url, urlDir) {
+  const htmlPath = path.join(urlDir, 'html.json');
+  
+  try {
+    await fs.access(htmlPath);
+    console.log(`HTML already exists for: ${url}`);
+    // Return the existing HTML content for use in next steps
+    const htmlData = JSON.parse(await fs.readFile(htmlPath, 'utf8'));
+    return { success: true, skipped: true, htmlContent: htmlData.content };
+  } catch {
+    // File doesn't exist, proceed with fetching
+  }
+  
+  try {
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -114,18 +130,37 @@ async function processUrl(url) {
       timeout: 30000
     });
     
-    // 3. Store HTML content and headers in html.json
-    await fs.writeFile(
-      path.join(urlDir, 'html.json'),
-      JSON.stringify({
-        content: response.data,
-        headers: response.headers,
-        status: response.status
-      }, null, 2)
-    );
+    const htmlData = {
+      content: response.data,
+      headers: response.headers,
+      status: response.status
+    };
     
-    // 4. Process with Mozilla Readability
-    const dom = new JSDOM(response.data, { url });
+    await fs.writeFile(htmlPath, JSON.stringify(htmlData, null, 2));
+    console.log(`Fetched and stored HTML for: ${url}`);
+    return { success: true, skipped: false, htmlContent: response.data };
+  } catch (error) {
+    console.error(`Error fetching HTML for ${url}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Step 3: Process with Mozilla Readability
+async function processWithReadability(url, urlDir, htmlContent) {
+  const contentPath = path.join(urlDir, 'content.json');
+  
+  try {
+    await fs.access(contentPath);
+    console.log(`Readability content already exists for: ${url}`);
+    // Return the existing content for use in next steps
+    const contentData = JSON.parse(await fs.readFile(contentPath, 'utf8'));
+    return { success: true, skipped: true, article: contentData };
+  } catch {
+    // File doesn't exist, proceed with processing
+  }
+  
+  try {
+    const dom = new JSDOM(htmlContent, { url });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
     
@@ -133,19 +168,53 @@ async function processUrl(url) {
       throw new Error('Failed to parse article with Readability');
     }
     
-    await fs.writeFile(
-      path.join(urlDir, 'content.json'),
-      JSON.stringify(article, null, 2)
-    );
-    
-    // 5. Convert HTML content to text
+    await fs.writeFile(contentPath, JSON.stringify(article, null, 2));
+    console.log(`Processed with Readability for: ${url}`);
+    return { success: true, skipped: false, article };
+  } catch (error) {
+    console.error(`Error processing with Readability for ${url}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Step 4: Convert HTML content to text
+async function convertToText(url, urlDir, article) {
+  const textPath = path.join(urlDir, 'text.json');
+  
+  try {
+    await fs.access(textPath);
+    console.log(`Text content already exists for: ${url}`);
+    // Return the existing text content for use in next steps
+    const textData = JSON.parse(await fs.readFile(textPath, 'utf8'));
+    return { success: true, skipped: true, textContent: textData.text };
+  } catch {
+    // File doesn't exist, proceed with conversion
+  }
+  
+  try {
     const textContent = htmlToText(article.content);
-    await fs.writeFile(
-      path.join(urlDir, 'text.json'),
-      JSON.stringify({ text: textContent }, null, 2)
-    );
-    
-    // 6. Generate TTS audio
+    await fs.writeFile(textPath, JSON.stringify({ text: textContent }, null, 2));
+    console.log(`Converted to text for: ${url}`);
+    return { success: true, skipped: false, textContent };
+  } catch (error) {
+    console.error(`Error converting to text for ${url}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Step 5: Generate TTS audio
+async function generateTtsAudio(url, urlDir, textContent) {
+  const audioPath = path.join(urlDir, 'text.mp3');
+  
+  try {
+    await fs.access(audioPath);
+    console.log(`TTS audio already exists for: ${url}`);
+    return { success: true, skipped: true };
+  } catch {
+    // File doesn't exist, proceed with generation
+  }
+  
+  try {
     console.log(`Generating TTS for: ${url}`);
     const mp3 = await openai.audio.speech.create({
       model: "model_q8f16",
@@ -154,17 +223,67 @@ async function processUrl(url) {
     });
     
     const buffer = Buffer.from(await mp3.arrayBuffer());
-    await fs.writeFile(path.join(urlDir, 'text.mp3'), buffer);
+    await fs.writeFile(audioPath, buffer);
+    console.log(`Generated TTS audio for: ${url}`);
+    return { success: true, skipped: false };
+  } catch (error) {
+    console.error(`Error generating TTS for ${url}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Main process URL function that orchestrates all steps
+async function processUrl(url) {
+  const hash = generateHash(url);
+  const urlDir = path.join(DATA_DIR, hash);
+  
+  try {
+    // Step 1: Store URL info
+    const infoResult = await storeUrlInfo(url, urlDir);
+    if (!infoResult.success) {
+      return { success: false, message: `Failed at step 1: ${infoResult.error}`, hash };
+    }
+    
+    // Step 2: Fetch and store HTML
+    const htmlResult = await fetchAndStoreHtml(url, urlDir);
+    if (!htmlResult.success) {
+      return { success: false, message: `Failed at step 2: ${htmlResult.error}`, hash };
+    }
+    
+    // Step 3: Process with Readability
+    const readabilityResult = await processWithReadability(url, urlDir, htmlResult.htmlContent);
+    if (!readabilityResult.success) {
+      return { success: false, message: `Failed at step 3: ${readabilityResult.error}`, hash };
+    }
+    
+    // Step 4: Convert to text
+    const textResult = await convertToText(url, urlDir, readabilityResult.article);
+    if (!textResult.success) {
+      return { success: false, message: `Failed at step 4: ${textResult.error}`, hash };
+    }
+    
+    // Step 5: Generate TTS audio
+    const ttsResult = await generateTtsAudio(url, urlDir, textResult.textContent);
+    if (!ttsResult.success) {
+      return { success: false, message: `Failed at step 5: ${ttsResult.error}`, hash };
+    }
     
     console.log(`Successfully processed: ${url}`);
-    return { success: true, message: 'URL processed successfully', hash };
+    return { 
+      success: true, 
+      message: 'URL processed successfully', 
+      hash,
+      steps: {
+        info: infoResult.skipped ? 'skipped' : 'processed',
+        html: htmlResult.skipped ? 'skipped' : 'processed',
+        readability: readabilityResult.skipped ? 'skipped' : 'processed',
+        text: textResult.skipped ? 'skipped' : 'processed',
+        tts: ttsResult.skipped ? 'skipped' : 'processed'
+      }
+    };
     
   } catch (error) {
     console.error(`Error processing URL ${url}:`, error);
-    // Clean up partial directory on error
-    try {
-      await fs.rm(urlDir, { recursive: true, force: true });
-    } catch {}
     return { success: false, message: error.message, hash };
   }
 }
