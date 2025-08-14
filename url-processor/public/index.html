@@ -266,6 +266,49 @@
             max-height: 300px;
             overflow-y: auto;
         }
+        
+        .rss-info {
+            font-size: 14px;
+        }
+        
+        .rss-info h4 {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .copy-btn {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        
+        .copy-btn:hover {
+            background: #45a049;
+        }
+        
+        .copy-btn:active {
+            background: #3d8b40;
+        }
+        
+        .url-meta {
+            font-size: 11px;
+            color: #888;
+            margin-top: 3px;
+            display: flex;
+            gap: 12px;
+        }
+        
+        .url-meta span {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
     </style>
 </head>
 <body>
@@ -280,6 +323,11 @@
             <button onclick="processAll()" id="processAllBtn" class="process-all-btn">
                 🚀 Process All URLs
             </button>
+            
+            <div id="rssInfo" class="rss-info" style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196f3;">
+                <h4 style="margin: 0 0 10px 0; color: #1976d2;">📡 RSS Feed Information</h4>
+                <div id="rssDetails">Loading RSS information...</div>
+            </div>
         </div>
         
         <div id="status"></div>
@@ -305,10 +353,12 @@
         let urls = [];
         let urlStatuses = {};
         let statusInterval = null;
+        let rssInfo = null;
         
         // Load URLs on page load
         window.onload = function() {
             loadUrls();
+            loadRssInfo();
             startStatusPolling();
         };
         
@@ -339,6 +389,14 @@
                     // If audio is being generated, poll more frequently
                     if (hasAudioGeneration) {
                         // Already polling every 1 second, which is good for audio generation
+                    }
+                    
+                    // Also refresh RSS info periodically if there are completed URLs
+                    const hasCompleted = Object.values(urlStatuses).some(status => 
+                        status.status === 'completed'
+                    );
+                    if (hasCompleted && Math.random() < 0.1) { // 10% chance per poll to refresh RSS info
+                        await loadRssInfo();
                     }
                 }
             }, 8000);
@@ -383,6 +441,18 @@
             }
         }
         
+        // Load RSS information
+        async function loadRssInfo() {
+            try {
+                const response = await fetch('/api/rss-info');
+                rssInfo = await response.json();
+                renderRssInfo();
+            } catch (error) {
+                console.error('Error loading RSS info:', error);
+                document.getElementById('rssDetails').innerHTML = 'Failed to load RSS information';
+            }
+        }
+        
         // Add new URL
         async function addUrl() {
             const urlInput = document.getElementById('urlInput');
@@ -408,6 +478,7 @@
                     urlInput.value = '';
                     showStatus('URL added successfully! Processing will start automatically.', 'success');
                     await loadUrls();
+                    await loadRssInfo(); // Refresh RSS info
                     
                     // Immediately start tracking status for new URL
                     await updateAllStatuses();
@@ -421,9 +492,10 @@
         
         // Delete URL
         async function deleteUrl(index) {
-            const urlToDelete = urls[index];
+            const urlEntry = urls[index];
+            const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
             
-            if (!confirm(`Are you sure you want to delete this URL?\n\n${urlToDelete}\n\nThis will also delete all processed data for this URL.`)) {
+            if (!confirm(`Are you sure you want to delete this URL?\n\n${url}\n\nThis will also delete all processed data for this URL.`)) {
                 return;
             }
             
@@ -438,9 +510,10 @@
                     showStatus('URL and all associated data deleted successfully', 'success');
                     
                     // Remove from local status tracking
-                    delete urlStatuses[urlToDelete];
+                    delete urlStatuses[url];
                     
                     await loadUrls();
+                    await loadRssInfo(); // Refresh RSS info
                 } else {
                     showStatus('Error deleting URL: ' + result.error, 'error');
                 }
@@ -473,6 +546,7 @@
                     const successful = result.results.filter(r => r.success).length;
                     const total = result.results.length;
                     showStatus(`Processing complete! ${successful}/${total} URLs processed successfully.`, 'success');
+                    await loadRssInfo(); // Refresh RSS info after processing
                 } else {
                     showStatus('Error processing URLs: ' + result.error, 'error');
                 }
@@ -544,6 +618,49 @@
             }
         }
         
+        // Render RSS information
+        function renderRssInfo() {
+            const rssDetails = document.getElementById('rssDetails');
+            
+            if (!rssInfo) {
+                rssDetails.innerHTML = 'RSS information not available';
+                return;
+            }
+            
+            rssDetails.innerHTML = `
+                <div style="margin-bottom: 8px;">
+                    <strong>RSS Feed URL:</strong> 
+                    <span style="font-family: monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">${rssInfo.rssUrl}</span>
+                    <button class="copy-btn" onclick="copyToClipboard('${rssInfo.rssUrl}')">📋 Copy</button>
+                </div>
+                <div style="margin-bottom: 8px;">
+                    <strong>API Base URL:</strong> 
+                    <span style="font-family: monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">${rssInfo.kokoroApiUrl}</span>
+                    <button class="copy-btn" onclick="copyToClipboard('${rssInfo.kokoroApiUrl}')">📋 Copy</button>
+                </div>
+                <div>
+                    <strong>📊 Status:</strong> ${rssInfo.totalProcessed} URL(s) processed and available in RSS feed
+                </div>
+            `;
+        }
+        
+        // Copy to clipboard function
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showStatus('Copied to clipboard!', 'success');
+            } catch (error) {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showStatus('Copied to clipboard!', 'success');
+            }
+        }
+        
         // Render URLs list
         function renderUrls() {
             const container = document.getElementById('urlListContainer');
@@ -553,7 +670,10 @@
                 return;
             }
             
-            container.innerHTML = urls.map((url, index) => {
+            container.innerHTML = urls.map((urlEntry, index) => {
+                const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+                const addedAt = typeof urlEntry === 'object' ? urlEntry.addedAt : null;
+                
                 const status = urlStatuses[url] || { 
                     status: 'not_started', 
                     step: 0, 
@@ -579,10 +699,16 @@
                     displayStepName = 'Concatenating audio files';
                 }
                 
+                // Format dates
+                const addedDateStr = addedAt ? new Date(addedAt).toLocaleString() : 'Unknown';
+                
                 return `
                     <div class="url-item">
                         <div class="url-content">
                             <div class="url-text">${url}</div>
+                            <div class="url-meta">
+                                <span>📅 Added: ${addedDateStr}</span>
+                            </div>
                             <div class="url-status">
                                 <span class="status-indicator ${statusClass}"></span>
                                 <div class="progress-bar">

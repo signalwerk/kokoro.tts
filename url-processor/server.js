@@ -542,12 +542,23 @@ app.post('/api/urls', async (req, res) => {
   
   const urls = await loadUrls();
   
-  // Check if URL already exists
-  if (urls.includes(trimmedUrl)) {
+  // Check if URL already exists (handle both string and object formats)
+  const urlExists = urls.some(item => {
+    const existingUrl = typeof item === 'string' ? item : item.url;
+    return existingUrl === trimmedUrl;
+  });
+  
+  if (urlExists) {
     return res.status(400).json({ error: 'URL already exists' });
   }
   
-  urls.push(trimmedUrl);
+  // Add URL with timestamp
+  const urlEntry = {
+    url: trimmedUrl,
+    addedAt: new Date().toISOString()
+  };
+  
+  urls.push(urlEntry);
   await saveUrls(urls);
   
   // Process URL in background
@@ -555,7 +566,7 @@ app.post('/api/urls', async (req, res) => {
     console.log('Processing result:', result);
   });
   
-  res.json({ success: true, url: trimmedUrl });
+  res.json({ success: true, url: trimmedUrl, addedAt: urlEntry.addedAt });
 });
 
 // Delete URL
@@ -567,7 +578,8 @@ app.delete('/api/urls/:index', async (req, res) => {
     return res.status(404).json({ error: 'URL not found' });
   }
   
-  const removedUrl = urls.splice(index, 1)[0];
+  const removedUrlEntry = urls.splice(index, 1)[0];
+  const removedUrl = typeof removedUrlEntry === 'string' ? removedUrlEntry : removedUrlEntry.url;
   await saveUrls(urls);
   
   // Optionally remove processed data
@@ -592,7 +604,8 @@ app.post('/api/process-all', async (req, res) => {
   
   // Process URLs sequentially to avoid overwhelming the system
   const results = [];
-  for (const url of urls) {
+  for (const urlEntry of urls) {
+    const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
     const result = await processUrl(url);
     results.push({ url, ...result });
   }
@@ -637,7 +650,8 @@ app.get('/api/status-all', async (req, res) => {
     const urls = await loadUrls();
     const statuses = {};
     
-    for (const url of urls) {
+    for (const urlEntry of urls) {
+      const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
       const hash = generateHash(url);
       statuses[url] = await getUrlStatus(hash);
     }
@@ -659,6 +673,45 @@ app.get('/api/audio/:hash', async (req, res) => {
     res.sendFile(audioPath);
   } catch (error) {
     res.status(404).json({ error: 'Audio file not found' });
+  }
+});
+
+// Get RSS feed information
+app.get('/api/rss-info', async (req, res) => {
+  try {
+    const urls = await loadUrls();
+    const completedUrls = [];
+    
+    for (const urlEntry of urls) {
+      const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+      const hash = generateHash(url);
+      const status = await getUrlStatus(hash);
+      
+      if (status.status === 'completed') {
+        const urlDir = path.join(DATA_DIR, hash);
+        try {
+          const info = JSON.parse(await fs.readFile(path.join(urlDir, 'info.json'), 'utf8'));
+          completedUrls.push({
+            url,
+            hash,
+            processedAt: info.processedAt,
+            addedAt: typeof urlEntry === 'object' ? urlEntry.addedAt : null,
+            audioUrl: `${KOKORO_API_URL}/audio/${hash}`
+          });
+        } catch (error) {
+          console.error('Error reading info for', url, error);
+        }
+      }
+    }
+    
+    res.json({
+      rssUrl: `${KOKORO_API_URL}/rss`,
+      kokoroApiUrl: KOKORO_API_URL,
+      completedUrls,
+      totalProcessed: completedUrls.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get RSS information' });
   }
 });
 
