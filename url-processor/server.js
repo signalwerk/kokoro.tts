@@ -33,7 +33,32 @@ const openai = new OpenAI({
 });
 
 app.use(express.json());
-app.use(express.static('public'));
+
+// Basic auth middleware
+function basicAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="URL Processor"');
+    return res.status(401).send('Authentication required');
+  }
+  
+  const credentials = Buffer.from(auth.slice(6), 'base64').toString('utf8');
+  const [username, password] = credentials.split(':');
+  
+  // Use KW_SECRET_API_KEY as password, admin as username
+  const expectedPassword = process.env.KW_SECRET_API_KEY || "no-key";
+  
+  if (username !== 'admin' || password !== expectedPassword) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="URL Processor"');
+    return res.status(401).send('Invalid credentials');
+  }
+  
+  next();
+}
+
+// Serve protected static files with basic auth
+app.use('/', basicAuth, express.static('public'));
 
 // Ensure data directory exists
 async function ensureDataDir() {
@@ -186,9 +211,21 @@ async function convertToText(url, urlDir, article) {
   
   try {
     const textChunks = htmlToText(article.content);
-    await fs.writeFile(textPath, JSON.stringify({ chunks: textChunks }, null, 2));
-    console.log(`Converted to ${textChunks.length} text chunks for: ${url}`);
-    return { success: true, skipped: false, textChunks };
+    
+    // Add title as first chunk if it exists
+    const finalChunks = [];
+    if (article.title) {
+      finalChunks.push({
+        text: article.title,
+        type: "h",
+        level: 1
+      });
+    }
+    finalChunks.push(...textChunks);
+    
+    await fs.writeFile(textPath, JSON.stringify({ chunks: finalChunks }, null, 2));
+    console.log(`Converted to ${finalChunks.length} text chunks for: ${url} (including title)`);
+    return { success: true, skipped: false, textChunks: finalChunks };
   } catch (error) {
     console.error(`Error converting to text for ${url}:`, error);
     return { success: false, error: error.message };
@@ -520,13 +557,13 @@ async function processUrl(url) {
 // API Routes
 
 // Get all URLs
-app.get('/api/urls', async (req, res) => {
+app.get('/api/urls', basicAuth, async (req, res) => {
   const urls = await loadUrls();
   res.json(urls);
 });
 
 // Add new URL
-app.post('/api/urls', async (req, res) => {
+app.post('/api/urls', basicAuth, async (req, res) => {
   const { url } = req.body;
   
   if (!url) {
@@ -570,7 +607,7 @@ app.post('/api/urls', async (req, res) => {
 });
 
 // Delete URL
-app.delete('/api/urls/:index', async (req, res) => {
+app.delete('/api/urls/:index', basicAuth, async (req, res) => {
   const index = parseInt(req.params.index);
   const urls = await loadUrls();
   
@@ -595,7 +632,7 @@ app.delete('/api/urls/:index', async (req, res) => {
 });
 
 // Process all URLs
-app.post('/api/process-all', async (req, res) => {
+app.post('/api/process-all', basicAuth, async (req, res) => {
   const urls = await loadUrls();
   
   if (urls.length === 0) {
@@ -614,7 +651,7 @@ app.post('/api/process-all', async (req, res) => {
 });
 
 // Get processed data for a URL
-app.get('/api/processed/:hash', async (req, res) => {
+app.get('/api/processed/:hash', basicAuth, async (req, res) => {
   const { hash } = req.params;
   const urlDir = path.join(DATA_DIR, hash);
   
@@ -638,14 +675,14 @@ app.get('/api/processed/:hash', async (req, res) => {
 });
 
 // Get processing status for a URL
-app.get('/api/status/:hash', async (req, res) => {
+app.get('/api/status/:hash', basicAuth, async (req, res) => {
   const { hash } = req.params;
   const status = await getUrlStatus(hash);
   res.json(status);
 });
 
 // Get status for all URLs
-app.get('/api/status-all', async (req, res) => {
+app.get('/api/status-all', basicAuth, async (req, res) => {
   try {
     const urls = await loadUrls();
     const statuses = {};
@@ -663,7 +700,7 @@ app.get('/api/status-all', async (req, res) => {
 });
 
 // Serve audio file
-app.get('/api/audio/:hash', async (req, res) => {
+app.get('/api/audio/:hash', basicAuth, async (req, res) => {
   const { hash } = req.params;
   const audioPath = path.join(DATA_DIR, hash, 'text.mp3');
   
@@ -677,7 +714,7 @@ app.get('/api/audio/:hash', async (req, res) => {
 });
 
 // Get RSS feed information
-app.get('/api/rss-info', async (req, res) => {
+app.get('/api/rss-info', basicAuth, async (req, res) => {
   try {
     const urls = await loadUrls();
     const completedUrls = [];
