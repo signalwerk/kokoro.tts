@@ -2,7 +2,7 @@ services:
   kokoro-web:
     image: ghcr.io/eduardolat/kokoro-web:latest
     ports:
-      - "3000:3000"
+      - "8542:3000"
     environment:
       - KW_SECRET_API_KEY=${KW_SECRET_API_KEY}
     volumes:
