@@ -20,7 +20,7 @@ const KOKORO_API_URL = process.env.KOKORO_API_URL || 'http://localhost:5173/api/
 // Initialize OpenAI client for Kokoro TTS
 const openai = new OpenAI({
   baseURL: KOKORO_API_URL,
-  apiKey: process.env.OPENAI_API_KEY || "no-key",
+  apiKey: process.env.KW_SECRET_API_KEY || "no-key",
 });
 
 app.use(express.json());

@@ -12,7 +12,7 @@ services:
   url-processor:
     build: ./url-processor
     ports:
-      - "3001:3000"
+      - "8543:3000"
     environment:
       - KOKORO_API_URL=${KOKORO_API_URL}
     volumes:
