@@ -21,6 +21,9 @@ const DATA_DIR = process.env.DATA_DIR ||  '/kokoro/data';
 const URLS_FILE = path.join(DATA_DIR, 'urls.json');
 const KOKORO_API_URL = process.env.KOKORO_API_URL || 'http://localhost:5173/api/v1';
 
+// Clean up the API URL - remove trailing slash if present
+const cleanKokoroUrl = KOKORO_API_URL.replace(/\/$/, '');
+
 // Audio processing configuration
 const AUDIO_CONFIG = {
   silenceDuration: parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2
@@ -28,9 +31,37 @@ const AUDIO_CONFIG = {
 
 // Initialize OpenAI client for Kokoro TTS
 const openai = new OpenAI({
-  baseURL: KOKORO_API_URL,
+  baseURL: cleanKokoroUrl,
   apiKey: process.env.KW_SECRET_API_KEY || "no-key",
+  timeout: 120000, // 2 minutes timeout
 });
+
+// Test the Kokoro API connection on startup
+async function testKokoroConnection() {
+  try {
+    console.log(`Testing connection to Kokoro API at: ${cleanKokoroUrl}`);
+    
+    // Try a small test request
+    const testMp3 = await openai.audio.speech.create({
+      model: "model_q8f16",
+      voice: "af_heart",
+      input: "Connection test"
+    });
+    
+    console.log('✓ Kokoro API connection successful');
+  } catch (error) {
+    console.error('✗ Kokoro API connection failed:', error.message);
+    console.error('Please check that the Kokoro TTS service is running and accessible');
+    
+    // Try to provide more diagnostic information
+    if (error.status) {
+      console.error(`HTTP Status: ${error.status}`);
+    }
+    if (error.response?.data) {
+      console.error('Response data:', error.response.data);
+    }
+  }
+}
 
 app.use(express.json());
 
@@ -72,6 +103,41 @@ async function ensureDataDir() {
     }
   } catch (error) {
     console.error('Error creating data directory:', error);
+  }
+}
+
+// Helper function to generate TTS with retries
+async function generateTtsWithRetry(text, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(`TTS attempt ${attempt}/${retries}...`);
+      
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`TTS request timeout after 60 seconds (attempt ${attempt})`)), 60000);
+      });
+      
+      const ttsPromise = openai.audio.speech.create({
+        model: "model_q8f16",
+        voice: "af_heart",
+        input: text
+      });
+      
+      const mp3 = await Promise.race([ttsPromise, timeoutPromise]);
+      console.log(`TTS request successful on attempt ${attempt}`);
+      
+      return Buffer.from(await mp3.arrayBuffer());
+    } catch (error) {
+      console.error(`TTS attempt ${attempt} failed:`, error.message);
+      
+      if (attempt === retries) {
+        throw error;
+      }
+      
+      // Wait before retry (exponential backoff)
+      const waitTime = Math.pow(2, attempt) * 1000;
+      console.log(`Retrying in ${waitTime}ms...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
   }
 }
 
@@ -345,10 +411,13 @@ async function generateTtsAudio(url, urlDir, textChunks) {
     audioProgress[hash] = {
       currentChunk: 0,
       totalChunks: textChunks.length,
-      status: 'generating'
+      status: 'generating',
+      startTime: Date.now()
     };
     
     const chunkFiles = [];
+    let successfulChunks = 0;
+    let failedChunks = 0;
     
     // Process each chunk
     for (let i = 0; i < textChunks.length; i++) {
@@ -358,6 +427,8 @@ async function generateTtsAudio(url, urlDir, textChunks) {
       
       // Update progress
       audioProgress[hash].currentChunk = i + 1;
+      audioProgress[hash].successfulChunks = successfulChunks;
+      audioProgress[hash].failedChunks = failedChunks;
       
       try {
         // Check if chunk audio already exists
@@ -370,17 +441,47 @@ async function generateTtsAudio(url, urlDir, textChunks) {
         // Limit text length for TTS (Kokoro has limits)
         const limitedText = chunk.text.substring(0, 4000);
         
-        const mp3 = await openai.audio.speech.create({
-          model: "model_q8f16",
-          voice: "af_heart",
-          input: limitedText
-        });
+        console.log(`Making TTS request for chunk ${i + 1}...`);
         
-        const buffer = Buffer.from(await mp3.arrayBuffer());
-        await fs.writeFile(chunkPath, buffer);
+        try {
+          const buffer = await generateTtsWithRetry(limitedText);
+          await fs.writeFile(chunkPath, buffer);
+          
+          console.log(`Successfully saved chunk ${i + 1}/${textChunks.length}`);
+          successfulChunks++;
+        } catch (chunkError) {
+          console.error(`FAILED to generate TTS for chunk ${i + 1}/${textChunks.length}:`);
+          console.error(`  Error: ${chunkError.message}`);
+          console.error(`  Chunk type: ${chunk.type}${chunk.level ? ` level ${chunk.level}` : ''}`);
+          console.error(`  Text preview: "${chunk.text.substring(0, 100)}${chunk.text.length > 100 ? '...' : ''}"`);
+          console.error(`  Text length: ${chunk.text.length} characters`);
+          console.error(`  Limited text length: ${limitedText.length} characters`);
+          
+          if (chunkError.status) {
+            console.error(`  HTTP Status: ${chunkError.status}`);
+          }
+          if (chunkError.response?.data) {
+            console.error(`  Response data:`, chunkError.response.data);
+          }
+          
+          failedChunks++;
+          
+          // Skip this chunk entirely - don't add to chunkFiles
+          continue;
+        }
       }
       
       chunkFiles.push(chunkPath);
+    }
+    
+    console.log(`Completed TTS generation: ${successfulChunks} successful, ${failedChunks} failed chunks`);
+    
+    if (failedChunks > 0) {
+      console.warn(`WARNING: ${failedChunks} chunks failed to generate. Audio will be incomplete.`);
+    }
+    
+    if (successfulChunks === 0) {
+      throw new Error(`All ${textChunks.length} chunks failed to generate TTS audio. Cannot create final audio file.`);
     }
     
     // Update progress to concatenating
@@ -402,6 +503,8 @@ async function generateTtsAudio(url, urlDir, textChunks) {
     if (validChunkFiles.length === 0) {
       throw new Error('No valid audio chunks found for concatenation');
     }
+    
+    console.log(`Concatenating ${validChunkFiles.length} valid audio chunks (${chunkFiles.length - validChunkFiles.length} chunks skipped due to generation failures)`);
     
     // Create concatenated audio with configurable silence gaps
     await concatenateAudioWithSilence(validChunkFiles, audioPath, AUDIO_CONFIG);
@@ -556,6 +659,34 @@ async function processUrl(url) {
 
 // API Routes
 
+// Health check endpoint
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test Kokoro API
+    const testMp3 = await Promise.race([
+      openai.audio.speech.create({
+        model: "model_q8f16",
+        voice: "af_heart",
+        input: "Health check"
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 10000))
+    ]);
+    
+    res.json({
+      status: 'healthy',
+      kokoroApi: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      kokoroApi: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Get all URLs
 app.get('/api/urls', basicAuth, async (req, res) => {
   const urls = await loadUrls();
@@ -681,6 +812,28 @@ app.get('/api/status/:hash', basicAuth, async (req, res) => {
   res.json(status);
 });
 
+// Get detailed progress for audio generation
+app.get('/api/progress/:hash', basicAuth, async (req, res) => {
+  const { hash } = req.params;
+  
+  if (audioProgress[hash]) {
+    const progress = audioProgress[hash];
+    const elapsed = Date.now() - progress.startTime;
+    const avgTimePerChunk = progress.currentChunk > 0 ? elapsed / progress.currentChunk : 0;
+    const estimatedTotal = avgTimePerChunk * progress.totalChunks;
+    const estimatedRemaining = Math.max(0, estimatedTotal - elapsed);
+    
+    res.json({
+      ...progress,
+      elapsedMs: elapsed,
+      estimatedRemainingMs: estimatedRemaining,
+      avgTimePerChunkMs: avgTimePerChunk
+    });
+  } else {
+    res.json({ status: 'not_generating' });
+  }
+});
+
 // Get status for all URLs
 app.get('/api/status-all', basicAuth, async (req, res) => {
   try {
@@ -713,8 +866,18 @@ app.get('/api/audio/:hash', basicAuth, async (req, res) => {
   }
 });
 
-// Get RSS feed information
-app.get('/api/rss-info', basicAuth, async (req, res) => {
+// Helper function to escape XML content
+function escapeXml(unsafe) {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// Generate RSS feed
+app.get('/rss', async (req, res) => {
   try {
     const urls = await loadUrls();
     const completedUrls = [];
@@ -728,12 +891,21 @@ app.get('/api/rss-info', basicAuth, async (req, res) => {
         const urlDir = path.join(DATA_DIR, hash);
         try {
           const info = JSON.parse(await fs.readFile(path.join(urlDir, 'info.json'), 'utf8'));
+          const textData = JSON.parse(await fs.readFile(path.join(urlDir, 'text.json'), 'utf8'));
+          
+          // Try to get the title from the first chunk if it's a heading
+          let title = url;
+          if (textData.chunks && textData.chunks.length > 0 && textData.chunks[0].type === 'h') {
+            title = textData.chunks[0].text;
+          }
+          
           completedUrls.push({
             url,
             hash,
+            title,
             processedAt: info.processedAt,
             addedAt: typeof urlEntry === 'object' ? urlEntry.addedAt : null,
-            audioUrl: `${KOKORO_API_URL}/audio/${hash}`
+            description: textData.chunks ? textData.chunks.slice(0, 3).map(chunk => chunk.text).join(' ').substring(0, 200) + '...' : ''
           });
         } catch (error) {
           console.error('Error reading info for', url, error);
@@ -741,21 +913,66 @@ app.get('/api/rss-info', basicAuth, async (req, res) => {
       }
     }
     
-    res.json({
-      rssUrl: `${KOKORO_API_URL}/rss`,
-      kokoroApiUrl: KOKORO_API_URL,
-      completedUrls,
-      totalProcessed: completedUrls.length
-    });
+    // Sort by processedAt date (newest first)
+    completedUrls.sort((a, b) => new Date(b.processedAt) - new Date(a.processedAt));
+    
+    // Get the base URL for audio links
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const coverImageUrl = 'https://avatar.signalwerk.ch/latest/w2000/signalwerk.png';
+    
+    // Generate RSS XML
+    const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Kokoro TTS - Web Content Audio</title>
+    <description>Text-to-speech audio content generated from web articles using Kokoro TTS</description>
+    <link>${baseUrl}</link>
+    <language>en-us</language>
+    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+    <pubDate>${new Date().toUTCString()}</pubDate>
+    <itunes:image href="${coverImageUrl}"/>
+    <itunes:category text="Technology"/>
+    <itunes:subtitle>AI-generated audio from web content</itunes:subtitle>
+    <itunes:summary>Automated text-to-speech conversion of web articles using Kokoro TTS technology</itunes:summary>
+    <itunes:author>Kokoro TTS</itunes:author>
+    <itunes:owner>
+      <itunes:name>Kokoro TTS</itunes:name>
+    </itunes:owner>
+    <image>
+      <url>${coverImageUrl}</url>
+      <title>Kokoro TTS - Web Content Audio</title>
+      <link>${baseUrl}</link>
+    </image>
+${completedUrls.map(item => `    <item>
+      <title>${escapeXml(item.title)}</title>
+      <description>${escapeXml(item.description)}</description>
+      <link>${escapeXml(item.url)}</link>
+      <guid isPermaLink="false">${item.hash}</guid>
+      <pubDate>${new Date(item.processedAt).toUTCString()}</pubDate>
+      <enclosure url="${baseUrl}/api/audio/${item.hash}" type="audio/mpeg"/>
+      <itunes:image href="${coverImageUrl}"/>
+      <itunes:duration>00:00:00</itunes:duration>
+      <itunes:summary>${escapeXml(item.description)}</itunes:summary>
+    </item>`).join('\n')}
+  </channel>
+</rss>`;
+    
+    res.setHeader('Content-Type', 'application/rss+xml; charset=utf-8');
+    res.send(rssXml);
+    
   } catch (error) {
-    res.status(500).json({ error: 'Failed to get RSS information' });
+    console.error('Error generating RSS feed:', error);
+    res.status(500).send('Error generating RSS feed');
   }
 });
 
 // Initialize and start server
 await ensureDataDir();
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`URL Processor service running on port ${PORT}`);
-  console.log(`Kokoro API URL: ${KOKORO_API_URL}`);
+  console.log(`Kokoro API URL: ${cleanKokoroUrl}`);
+  
+  // Test Kokoro connection after a brief delay
+  setTimeout(testKokoroConnection, 2000);
 });

@@ -353,12 +353,11 @@
         let urls = [];
         let urlStatuses = {};
         let statusInterval = null;
-        let rssInfo = null;
         
         // Load URLs on page load
         window.onload = function() {
             loadUrls();
-            loadRssInfo();
+            renderRssInfo(); // Render RSS info immediately with calculated URL
             startStatusPolling();
         };
         
@@ -389,14 +388,6 @@
                     // If audio is being generated, poll more frequently
                     if (hasAudioGeneration) {
                         // Already polling every 1 second, which is good for audio generation
-                    }
-                    
-                    // Also refresh RSS info periodically if there are completed URLs
-                    const hasCompleted = Object.values(urlStatuses).some(status => 
-                        status.status === 'completed'
-                    );
-                    if (hasCompleted && Math.random() < 0.1) { // 10% chance per poll to refresh RSS info
-                        await loadRssInfo();
                     }
                 }
             }, 8000);
@@ -436,20 +427,11 @@
                 } else {
                     renderUrls();
                 }
-            } catch (error) {
-                showStatus('Error loading URLs: ' + error.message, 'error');
-            }
-        }
-        
-        // Load RSS information
-        async function loadRssInfo() {
-            try {
-                const response = await fetch('/api/rss-info');
-                rssInfo = await response.json();
+                
+                // Update RSS info display when URLs change
                 renderRssInfo();
             } catch (error) {
-                console.error('Error loading RSS info:', error);
-                document.getElementById('rssDetails').innerHTML = 'Failed to load RSS information';
+                showStatus('Error loading URLs: ' + error.message, 'error');
             }
         }
         
@@ -478,7 +460,6 @@
                     urlInput.value = '';
                     showStatus('URL added successfully! Processing will start automatically.', 'success');
                     await loadUrls();
-                    await loadRssInfo(); // Refresh RSS info
                     
                     // Immediately start tracking status for new URL
                     await updateAllStatuses();
@@ -513,7 +494,6 @@
                     delete urlStatuses[url];
                     
                     await loadUrls();
-                    await loadRssInfo(); // Refresh RSS info
                 } else {
                     showStatus('Error deleting URL: ' + result.error, 'error');
                 }
@@ -546,7 +526,6 @@
                     const successful = result.results.filter(r => r.success).length;
                     const total = result.results.length;
                     showStatus(`Processing complete! ${successful}/${total} URLs processed successfully.`, 'success');
-                    await loadRssInfo(); // Refresh RSS info after processing
                 } else {
                     showStatus('Error processing URLs: ' + result.error, 'error');
                 }
@@ -622,24 +601,21 @@
         function renderRssInfo() {
             const rssDetails = document.getElementById('rssDetails');
             
-            if (!rssInfo) {
-                rssDetails.innerHTML = 'RSS information not available';
-                return;
-            }
+            // Calculate RSS URL from current domain
+            const baseUrl = window.location.origin;
+            const rssUrl = `${baseUrl}/rss`;
+            
+            // Count completed URLs from status
+            const completedCount = Object.values(urlStatuses).filter(status => status.status === 'completed').length;
             
             rssDetails.innerHTML = `
                 <div style="margin-bottom: 8px;">
                     <strong>RSS Feed URL:</strong> 
-                    <span style="font-family: monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">${rssInfo.rssUrl}</span>
-                    <button class="copy-btn" onclick="copyToClipboard('${rssInfo.rssUrl}')">📋 Copy</button>
-                </div>
-                <div style="margin-bottom: 8px;">
-                    <strong>API Base URL:</strong> 
-                    <span style="font-family: monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">${rssInfo.kokoroApiUrl}</span>
-                    <button class="copy-btn" onclick="copyToClipboard('${rssInfo.kokoroApiUrl}')">📋 Copy</button>
+                    <span style="font-family: monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">${rssUrl}</span>
+                    <button class="copy-btn" onclick="copyToClipboard('${rssUrl}')">📋 Copy</button>
                 </div>
                 <div>
-                    <strong>📊 Status:</strong> ${rssInfo.totalProcessed} URL(s) processed and available in RSS feed
+                    <strong>📊 Status:</strong> ${completedCount} URL(s) processed and available in RSS feed
                 </div>
             `;
         }
@@ -726,6 +702,9 @@
                     </div>
                 `;
             }).join('');
+            
+            // Update RSS info when URLs are rendered
+            renderRssInfo();
         }
         
         // Handle Enter key in URL input
