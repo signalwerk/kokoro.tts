@@ -32,7 +32,7 @@ const AUDIO_CONFIG = {
 // Initialize OpenAI client for Kokoro TTS
 const openai = new OpenAI({
   baseURL: cleanKokoroUrl,
-  apiKey: process.env.KW_SECRET_API_KEY || "no-key",
+  apiKey: process.env.KOKORO_API_KEY || "no-key",
   timeout: 120000, // 2 minutes timeout
 });
 
@@ -77,8 +77,8 @@ function basicAuth(req, res, next) {
   const credentials = Buffer.from(auth.slice(6), 'base64').toString('utf8');
   const [username, password] = credentials.split(':');
   
-  // Use KW_SECRET_API_KEY as password, admin as username
-  const expectedPassword = process.env.KW_SECRET_API_KEY || "no-key";
+  // Use KOKORO_API_KEY as password, admin as username
+  const expectedPassword = process.env.KOKORO_API_KEY || "no-key";
   
   if (username !== 'admin' || password !== expectedPassword) {
     res.setHeader('WWW-Authenticate', 'Basic realm="URL Processor"');

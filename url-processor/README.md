@@ -64,7 +64,7 @@ The service uses ffmpeg for professional audio concatenation:
 ## Environment Variables
 
 - `KOKORO_API_URL` - URL of the Kokoro TTS API (default: http://kokoro-web:3000/api/v1)
-- `KW_SECRET_API_KEY` - API key for Kokoro TTS
+- `KOKORO_API_KEY` - API key for Kokoro TTS
 - `PORT` - Service port (default: 3000)
 - `DATA_DIR` - Data storage directory (default: /kokoro/data)
 - `AUDIO_SILENCE_DURATION` - Silence duration between chunks in seconds (default: 0.2)
