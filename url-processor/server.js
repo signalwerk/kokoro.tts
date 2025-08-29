@@ -14,6 +14,8 @@ import { htmlToText } from "./htmlToText.js";
 
 dotenv.config();
 
+const TTS_TIMEOUT = 15 * 60 * 1000; // 15 minutes timeout
+
 const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,7 +36,7 @@ const AUDIO_CONFIG = {
 const openai = new OpenAI({
   baseURL: cleanKokoroUrl,
   apiKey: process.env.KOKORO_API_KEY || "no-key",
-  timeout: 120000, // 2 minutes timeout
+  timeout: TTS_TIMEOUT, // 5 minutes timeout
 });
 
 // Test the Kokoro API connection on startup
@@ -120,10 +122,12 @@ async function generateTtsWithRetry(text, retries = 3) {
           () =>
             reject(
               new Error(
-                `TTS request timeout after 60 seconds (attempt ${attempt})`,
+                `TTS request timeout after ${
+                  TTS_TIMEOUT / 1000
+                } seconds (attempt ${attempt})`,
               ),
             ),
-          60000,
+          TTS_TIMEOUT,
         );
       });
 
