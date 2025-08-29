@@ -1,32 +1,33 @@
-import express from 'express';
-import fs from 'fs/promises';
-import path from 'path';
-import crypto from 'crypto';
-import axios from 'axios';
-import { JSDOM } from 'jsdom';
-import { Readability } from '@mozilla/readability';
-import * as cheerio from 'cheerio';
-import OpenAI from 'openai';
-import dotenv from 'dotenv';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { htmlToText } from './htmlToText.js';
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import crypto from "crypto";
+import axios from "axios";
+import { JSDOM } from "jsdom";
+import { Readability } from "@mozilla/readability";
+import * as cheerio from "cheerio";
+import OpenAI from "openai";
+import dotenv from "dotenv";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { htmlToText } from "./htmlToText.js";
 
 dotenv.config();
 
 const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = process.env.DATA_DIR ||  '/kokoro/data';
-const URLS_FILE = path.join(DATA_DIR, 'urls.json');
-const KOKORO_API_URL = process.env.KOKORO_API_URL || 'http://localhost:5173/api/v1';
+const DATA_DIR = process.env.DATA_DIR || "/kokoro/data";
+const URLS_FILE = path.join(DATA_DIR, "urls.json");
+const KOKORO_API_URL =
+  process.env.KOKORO_API_URL || "http://localhost:5173/api/v1";
 
 // Clean up the API URL - remove trailing slash if present
-const cleanKokoroUrl = KOKORO_API_URL.replace(/\/$/, '');
+const cleanKokoroUrl = KOKORO_API_URL.replace(/\/$/, "");
 
 // Audio processing configuration
 const AUDIO_CONFIG = {
-  silenceDuration: parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2
+  silenceDuration: parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2,
 };
 
 // Initialize OpenAI client for Kokoro TTS
@@ -40,25 +41,27 @@ const openai = new OpenAI({
 async function testKokoroConnection() {
   try {
     console.log(`Testing connection to Kokoro API at: ${cleanKokoroUrl}`);
-    
+
     // Try a small test request
     const testMp3 = await openai.audio.speech.create({
       model: "model_q8f16",
       voice: "af_heart",
-      input: "Connection test"
+      input: "Connection test",
     });
-    
-    console.log('✓ Kokoro API connection successful');
+
+    console.log("✓ Kokoro API connection successful");
   } catch (error) {
-    console.error('✗ Kokoro API connection failed:', error.message);
-    console.error('Please check that the Kokoro TTS service is running and accessible');
-    
+    console.error("✗ Kokoro API connection failed:", error.message);
+    console.error(
+      "Please check that the Kokoro TTS service is running and accessible",
+    );
+
     // Try to provide more diagnostic information
     if (error.status) {
       console.error(`HTTP Status: ${error.status}`);
     }
     if (error.response?.data) {
-      console.error('Response data:', error.response.data);
+      console.error("Response data:", error.response.data);
     }
   }
 }
@@ -68,28 +71,28 @@ app.use(express.json());
 // Basic auth middleware
 function basicAuth(req, res, next) {
   const auth = req.headers.authorization;
-  
-  if (!auth || !auth.startsWith('Basic ')) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="URL Processor"');
-    return res.status(401).send('Authentication required');
+
+  if (!auth || !auth.startsWith("Basic ")) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="URL Processor"');
+    return res.status(401).send("Authentication required");
   }
-  
-  const credentials = Buffer.from(auth.slice(6), 'base64').toString('utf8');
-  const [username, password] = credentials.split(':');
-  
+
+  const credentials = Buffer.from(auth.slice(6), "base64").toString("utf8");
+  const [username, password] = credentials.split(":");
+
   // Use KOKORO_API_KEY as password, admin as username
   const expectedPassword = process.env.KOKORO_API_KEY || "no-key";
-  
-  if (username !== 'admin' || password !== expectedPassword) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="URL Processor"');
-    return res.status(401).send('Invalid credentials');
+
+  if (username !== "admin" || password !== expectedPassword) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="URL Processor"');
+    return res.status(401).send("Invalid credentials");
   }
-  
+
   next();
 }
 
 // Serve protected static files with basic auth
-app.use('/', basicAuth, express.static('public'));
+app.use("/", basicAuth, express.static("public"));
 
 // Ensure data directory exists
 async function ensureDataDir() {
@@ -102,7 +105,7 @@ async function ensureDataDir() {
       await fs.writeFile(URLS_FILE, JSON.stringify([]));
     }
   } catch (error) {
-    console.error('Error creating data directory:', error);
+    console.error("Error creating data directory:", error);
   }
 }
 
@@ -111,48 +114,56 @@ async function generateTtsWithRetry(text, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       console.log(`TTS attempt ${attempt}/${retries}...`);
-      
+
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`TTS request timeout after 60 seconds (attempt ${attempt})`)), 60000);
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `TTS request timeout after 60 seconds (attempt ${attempt})`,
+              ),
+            ),
+          60000,
+        );
       });
-      
+
       const ttsPromise = openai.audio.speech.create({
         model: "model_q8f16",
         voice: "af_heart",
-        input: text
+        input: text,
       });
-      
+
       const mp3 = await Promise.race([ttsPromise, timeoutPromise]);
       console.log(`TTS request successful on attempt ${attempt}`);
-      
+
       return Buffer.from(await mp3.arrayBuffer());
     } catch (error) {
       console.error(`TTS attempt ${attempt} failed:`, error.message);
-      
+
       if (attempt === retries) {
         throw error;
       }
-      
+
       // Wait before retry (exponential backoff)
       const waitTime = Math.pow(2, attempt) * 1000;
       console.log(`Retrying in ${waitTime}ms...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
     }
   }
 }
 
 // Generate hash for URL
 function generateHash(url) {
-  return crypto.createHash('sha256').update(url).digest('hex');
+  return crypto.createHash("sha256").update(url).digest("hex");
 }
 
 // Load URLs from file
 async function loadUrls() {
   try {
-    const data = await fs.readFile(URLS_FILE, 'utf8');
+    const data = await fs.readFile(URLS_FILE, "utf8");
     return JSON.parse(data);
   } catch (error) {
-    console.error('Error loading URLs:', error);
+    console.error("Error loading URLs:", error);
     return [];
   }
 }
@@ -162,14 +173,14 @@ async function saveUrls(urls) {
   try {
     await fs.writeFile(URLS_FILE, JSON.stringify(urls, null, 2));
   } catch (error) {
-    console.error('Error saving URLs:', error);
+    console.error("Error saving URLs:", error);
   }
 }
 
 // Step 1: Create directory and store URL info
 async function storeUrlInfo(url, urlDir) {
-  const infoPath = path.join(urlDir, 'info.json');
-  
+  const infoPath = path.join(urlDir, "info.json");
+
   try {
     await fs.access(infoPath);
     console.log(`Info already exists for: ${url}`);
@@ -177,12 +188,12 @@ async function storeUrlInfo(url, urlDir) {
   } catch {
     // File doesn't exist, proceed with creation
   }
-  
+
   try {
     await fs.mkdir(urlDir, { recursive: true });
     await fs.writeFile(
       infoPath,
-      JSON.stringify({ url, processedAt: new Date().toISOString() }, null, 2)
+      JSON.stringify({ url, processedAt: new Date().toISOString() }, null, 2),
     );
     console.log(`Stored info for: ${url}`);
     return { success: true, skipped: false };
@@ -194,32 +205,33 @@ async function storeUrlInfo(url, urlDir) {
 
 // Step 2: Fetch URL content and store HTML
 async function fetchAndStoreHtml(url, urlDir) {
-  const htmlPath = path.join(urlDir, 'html.json');
-  
+  const htmlPath = path.join(urlDir, "html.json");
+
   try {
     await fs.access(htmlPath);
     console.log(`HTML already exists for: ${url}`);
     // Return the existing HTML content for use in next steps
-    const htmlData = JSON.parse(await fs.readFile(htmlPath, 'utf8'));
+    const htmlData = JSON.parse(await fs.readFile(htmlPath, "utf8"));
     return { success: true, skipped: true, htmlContent: htmlData.content };
   } catch {
     // File doesn't exist, proceed with fetching
   }
-  
+
   try {
     const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       },
-      timeout: 30000
+      timeout: 30000,
     });
-    
+
     const htmlData = {
       content: response.data,
       headers: response.headers,
-      status: response.status
+      status: response.status,
     };
-    
+
     await fs.writeFile(htmlPath, JSON.stringify(htmlData, null, 2));
     console.log(`Fetched and stored HTML for: ${url}`);
     return { success: true, skipped: false, htmlContent: response.data };
@@ -231,27 +243,27 @@ async function fetchAndStoreHtml(url, urlDir) {
 
 // Step 3: Process with Mozilla Readability
 async function processWithReadability(url, urlDir, htmlContent) {
-  const contentPath = path.join(urlDir, 'content.json');
-  
+  const contentPath = path.join(urlDir, "content.json");
+
   try {
     await fs.access(contentPath);
     console.log(`Readability content already exists for: ${url}`);
     // Return the existing content for use in next steps
-    const contentData = JSON.parse(await fs.readFile(contentPath, 'utf8'));
+    const contentData = JSON.parse(await fs.readFile(contentPath, "utf8"));
     return { success: true, skipped: true, article: contentData };
   } catch {
     // File doesn't exist, proceed with processing
   }
-  
+
   try {
     const dom = new JSDOM(htmlContent, { url });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
-    
+
     if (!article) {
-      throw new Error('Failed to parse article with Readability');
+      throw new Error("Failed to parse article with Readability");
     }
-    
+
     await fs.writeFile(contentPath, JSON.stringify(article, null, 2));
     console.log(`Processed with Readability for: ${url}`);
     return { success: true, skipped: false, article };
@@ -263,34 +275,39 @@ async function processWithReadability(url, urlDir, htmlContent) {
 
 // Step 4: Convert HTML content to text chunks
 async function convertToText(url, urlDir, article) {
-  const textPath = path.join(urlDir, 'text.json');
-  
+  const textPath = path.join(urlDir, "text.json");
+
   try {
     await fs.access(textPath);
     console.log(`Text content already exists for: ${url}`);
     // Return the existing text content for use in next steps
-    const textData = JSON.parse(await fs.readFile(textPath, 'utf8'));
+    const textData = JSON.parse(await fs.readFile(textPath, "utf8"));
     return { success: true, skipped: true, textChunks: textData.chunks };
   } catch {
     // File doesn't exist, proceed with conversion
   }
-  
+
   try {
     const textChunks = htmlToText(article.content);
-    
+
     // Add title as first chunk if it exists
     const finalChunks = [];
     if (article.title) {
       finalChunks.push({
         text: article.title,
         type: "h",
-        level: 1
+        level: 1,
       });
     }
     finalChunks.push(...textChunks);
-    
-    await fs.writeFile(textPath, JSON.stringify({ chunks: finalChunks }, null, 2));
-    console.log(`Converted to ${finalChunks.length} text chunks for: ${url} (including title)`);
+
+    await fs.writeFile(
+      textPath,
+      JSON.stringify({ chunks: finalChunks }, null, 2),
+    );
+    console.log(
+      `Converted to ${finalChunks.length} text chunks for: ${url} (including title)`,
+    );
     return { success: true, skipped: false, textChunks: finalChunks };
   } catch (error) {
     console.error(`Error converting to text for ${url}:`, error);
@@ -300,7 +317,7 @@ async function convertToText(url, urlDir, article) {
 
 // Helper function to generate hash for text chunk
 function generateTextHash(text) {
-  return crypto.createHash('md5').update(text).digest('hex');
+  return crypto.createHash("md5").update(text).digest("hex");
 }
 
 // Store for tracking audio generation progress
@@ -309,85 +326,100 @@ const audioProgress = {};
 // Helper function to get processing status for a URL hash
 async function getUrlStatus(hash) {
   const urlDir = path.join(DATA_DIR, hash);
-  
+
   try {
     // Check which files exist to determine processing status
-    const infoExists = await fs.access(path.join(urlDir, 'info.json')).then(() => true).catch(() => false);
-    const htmlExists = await fs.access(path.join(urlDir, 'html.json')).then(() => true).catch(() => false);
-    const contentExists = await fs.access(path.join(urlDir, 'content.json')).then(() => true).catch(() => false);
-    const textExists = await fs.access(path.join(urlDir, 'text.json')).then(() => true).catch(() => false);
-    const audioExists = await fs.access(path.join(urlDir, 'text.mp3')).then(() => true).catch(() => false);
-    
-    let status = 'not_started';
+    const infoExists = await fs
+      .access(path.join(urlDir, "info.json"))
+      .then(() => true)
+      .catch(() => false);
+    const htmlExists = await fs
+      .access(path.join(urlDir, "html.json"))
+      .then(() => true)
+      .catch(() => false);
+    const contentExists = await fs
+      .access(path.join(urlDir, "content.json"))
+      .then(() => true)
+      .catch(() => false);
+    const textExists = await fs
+      .access(path.join(urlDir, "text.json"))
+      .then(() => true)
+      .catch(() => false);
+    const audioExists = await fs
+      .access(path.join(urlDir, "text.mp3"))
+      .then(() => true)
+      .catch(() => false);
+
+    let status = "not_started";
     let step = 0;
-    let stepName = 'Not started';
+    let stepName = "Not started";
     let audioProgressInfo = null;
-    
+
     if (infoExists) {
-      status = 'processing';
+      status = "processing";
       step = 1;
-      stepName = 'URL info stored';
+      stepName = "URL info stored";
     }
     if (htmlExists) {
       step = 2;
-      stepName = 'HTML fetched';
+      stepName = "HTML fetched";
     }
     if (contentExists) {
       step = 3;
-      stepName = 'Content processed';
+      stepName = "Content processed";
     }
     if (textExists) {
       step = 4;
-      stepName = 'Text extracted';
-      
+      stepName = "Text extracted";
+
       // Check if we're currently generating audio
       if (audioProgress[hash]) {
         step = 5;
         const progress = audioProgress[hash];
-        if (progress.status === 'generating') {
+        if (progress.status === "generating") {
           stepName = `Generating audio (${progress.currentChunk}/${progress.totalChunks})`;
-        } else if (progress.status === 'concatenating') {
-          stepName = 'Concatenating audio files';
+        } else if (progress.status === "concatenating") {
+          stepName = "Concatenating audio files";
         }
         audioProgressInfo = progress;
       }
     }
     if (audioExists) {
-      status = 'completed';
+      status = "completed";
       step = 5;
-      stepName = 'Audio generated';
+      stepName = "Audio generated";
     }
-    
+
     const response = {
       status,
       step,
       stepName,
       totalSteps: 5,
-      progress: Math.round((step / 5) * 100)
+      progress: Math.round((step / 5) * 100),
     };
-    
+
     if (audioProgressInfo) {
       response.audioProgress = audioProgressInfo;
     }
-    
+
     return response;
   } catch (error) {
     return {
-      status: 'not_started',
+      status: "not_started",
       step: 0,
-      stepName: 'Not started',
+      stepName: "Not started",
       totalSteps: 5,
-      progress: 0
+      progress: 0,
     };
   }
 }
 
 // Step 5: Generate TTS audio
 async function generateTtsAudio(url, urlDir, textChunks) {
-  const audioPath = path.join(urlDir, 'text.mp3');
-  const chunksDir = path.join(urlDir, 'chunks');
+  const audioPath = path.join(urlDir, "text.mp3");
+  const chunksDir = path.join(urlDir, "chunks");
   const hash = generateHash(url);
-  
+
   try {
     await fs.access(audioPath);
     console.log(`TTS audio already exists for: ${url}`);
@@ -395,100 +427,130 @@ async function generateTtsAudio(url, urlDir, textChunks) {
   } catch {
     // File doesn't exist, proceed with generation
   }
-  
+
   if (!textChunks || textChunks.length === 0) {
     console.log(`No text chunks to process for: ${url}`);
     return { success: true, skipped: true };
   }
-  
+
   try {
     // Create chunks directory
     await fs.mkdir(chunksDir, { recursive: true });
-    
+
     console.log(`Generating TTS for ${textChunks.length} chunks for: ${url}`);
-    
+
     // Initialize progress tracking
     audioProgress[hash] = {
       currentChunk: 0,
       totalChunks: textChunks.length,
-      status: 'generating',
-      startTime: Date.now()
+      status: "generating",
+      startTime: Date.now(),
     };
-    
+
     const chunkFiles = [];
     let successfulChunks = 0;
     let failedChunks = 0;
-    
+
     // Process each chunk
     for (let i = 0; i < textChunks.length; i++) {
       const chunk = textChunks[i];
       const chunkHash = generateTextHash(chunk.text);
       const chunkPath = path.join(chunksDir, `${chunkHash}.mp3`);
-      
+
       // Update progress
       audioProgress[hash].currentChunk = i + 1;
       audioProgress[hash].successfulChunks = successfulChunks;
       audioProgress[hash].failedChunks = failedChunks;
-      
+
       try {
         // Check if chunk audio already exists
         await fs.access(chunkPath);
-        console.log(`Chunk ${i + 1}/${textChunks.length} already exists (${chunk.type}${chunk.level ? ` level ${chunk.level}` : ''})`);
+        console.log(
+          `Chunk ${i + 1}/${textChunks.length} already exists (${chunk.type}${
+            chunk.level ? ` level ${chunk.level}` : ""
+          })`,
+        );
       } catch {
         // Generate TTS for this chunk
-        console.log(`Processing chunk ${i + 1}/${textChunks.length} (${chunk.type}${chunk.level ? ` level ${chunk.level}` : ''}) - "${chunk.text.substring(0, 50)}${chunk.text.length > 50 ? '...' : ''}"`);
-        
+        console.log(
+          `Processing chunk ${i + 1}/${textChunks.length} (${chunk.type}${
+            chunk.level ? ` level ${chunk.level}` : ""
+          }) - "${chunk.text.substring(0, 50)}${
+            chunk.text.length > 50 ? "..." : ""
+          }"`,
+        );
+
         // Limit text length for TTS (Kokoro has limits)
         const limitedText = chunk.text.substring(0, 4000);
-        
+
         console.log(`Making TTS request for chunk ${i + 1}...`);
-        
+
         try {
           const buffer = await generateTtsWithRetry(limitedText);
           await fs.writeFile(chunkPath, buffer);
-          
+
           console.log(`Successfully saved chunk ${i + 1}/${textChunks.length}`);
           successfulChunks++;
         } catch (chunkError) {
-          console.error(`FAILED to generate TTS for chunk ${i + 1}/${textChunks.length}:`);
+          console.error(
+            `FAILED to generate TTS for chunk ${i + 1}/${textChunks.length}:`,
+          );
           console.error(`  Error: ${chunkError.message}`);
-          console.error(`  Chunk type: ${chunk.type}${chunk.level ? ` level ${chunk.level}` : ''}`);
-          console.error(`  Text preview: "${chunk.text.substring(0, 100)}${chunk.text.length > 100 ? '...' : ''}"`);
+          console.error(
+            `  Chunk type: ${chunk.type}${
+              chunk.level ? ` level ${chunk.level}` : ""
+            }`,
+          );
+          console.error(
+            `  Text preview: "${chunk.text.substring(0, 100)}${
+              chunk.text.length > 100 ? "..." : ""
+            }"`,
+          );
           console.error(`  Text length: ${chunk.text.length} characters`);
-          console.error(`  Limited text length: ${limitedText.length} characters`);
-          
+          console.error(
+            `  Limited text length: ${limitedText.length} characters`,
+          );
+
           if (chunkError.status) {
             console.error(`  HTTP Status: ${chunkError.status}`);
           }
           if (chunkError.response?.data) {
             console.error(`  Response data:`, chunkError.response.data);
           }
-          
+
           failedChunks++;
-          
+
           // Skip this chunk entirely - don't add to chunkFiles
           continue;
         }
       }
-      
+
       chunkFiles.push(chunkPath);
     }
-    
-    console.log(`Completed TTS generation: ${successfulChunks} successful, ${failedChunks} failed chunks`);
-    
+
+    console.log(
+      `Completed TTS generation: ${successfulChunks} successful, ${failedChunks} failed chunks`,
+    );
+
     if (failedChunks > 0) {
-      console.warn(`WARNING: ${failedChunks} chunks failed to generate. Audio will be incomplete.`);
+      console.warn(
+        `WARNING: ${failedChunks} chunks failed to generate. Audio will be incomplete.`,
+      );
     }
-    
+
     if (successfulChunks === 0) {
-      throw new Error(`All ${textChunks.length} chunks failed to generate TTS audio. Cannot create final audio file.`);
+      throw new Error(
+        `All ${textChunks.length} chunks failed to generate TTS audio. Cannot create final audio file.`,
+      );
     }
-    
+
     // Update progress to concatenating
-    audioProgress[hash].status = 'concatenating';
-    
-    console.log(`Generated ${chunkFiles.length} audio chunks. Concatenating with silence gaps...`);
-    
+    audioProgress[hash].status = "concatenating";
+
+    console.log(
+      `Generated ${chunkFiles.length} audio chunks. Concatenating with silence gaps...`,
+    );
+
     // Validate that all chunk files exist before concatenation
     const validChunkFiles = [];
     for (const chunkFile of chunkFiles) {
@@ -499,19 +561,23 @@ async function generateTtsAudio(url, urlDir, textChunks) {
         console.warn(`Chunk file not found, skipping: ${chunkFile}`);
       }
     }
-    
+
     if (validChunkFiles.length === 0) {
-      throw new Error('No valid audio chunks found for concatenation');
+      throw new Error("No valid audio chunks found for concatenation");
     }
-    
-    console.log(`Concatenating ${validChunkFiles.length} valid audio chunks (${chunkFiles.length - validChunkFiles.length} chunks skipped due to generation failures)`);
-    
+
+    console.log(
+      `Concatenating ${validChunkFiles.length} valid audio chunks (${
+        chunkFiles.length - validChunkFiles.length
+      } chunks skipped due to generation failures)`,
+    );
+
     // Create concatenated audio with configurable silence gaps
     await concatenateAudioWithSilence(validChunkFiles, audioPath, AUDIO_CONFIG);
-    
+
     // Complete and clean up progress tracking
     delete audioProgress[hash];
-    
+
     console.log(`Generated final TTS audio for: ${url}`);
     return { success: true, skipped: false };
   } catch (error) {
@@ -523,49 +589,57 @@ async function generateTtsAudio(url, urlDir, textChunks) {
 }
 
 // Function to concatenate audio files with silence gaps
-async function concatenateAudioWithSilence(chunkFiles, outputPath, options = {}) {
-  const { 
-    silenceDuration = 0.2 // seconds
+async function concatenateAudioWithSilence(
+  chunkFiles,
+  outputPath,
+  options = {},
+) {
+  const {
+    silenceDuration = 0.2, // seconds
   } = options;
-  
+
   if (chunkFiles.length === 0) {
-    throw new Error('No audio chunks to concatenate');
+    throw new Error("No audio chunks to concatenate");
   }
-  
+
   if (chunkFiles.length === 1) {
     // If only one chunk, just copy it
     await fs.copyFile(chunkFiles[0], outputPath);
     return;
   }
-  
+
   try {
     // Check if ffmpeg is available
-    await execAsync('ffmpeg -version');
+    await execAsync("ffmpeg -version");
   } catch (error) {
-    throw new Error('ffmpeg is required for audio concatenation but is not available. Please install ffmpeg.');
+    throw new Error(
+      "ffmpeg is required for audio concatenation but is not available. Please install ffmpeg.",
+    );
   }
-  
+
   try {
     // Create a temporary file list for ffmpeg
     const tempDir = path.dirname(path.resolve(outputPath));
     const timestamp = Date.now();
     const fileListPath = path.join(tempDir, `filelist-${timestamp}.txt`);
     const silencePath = path.join(tempDir, `silence-${timestamp}.mp3`);
-    
+
     // Generate silence with same characteristics as the audio files
     // We'll create a simple silence MP3 that ffmpeg can handle
-    await execAsync(`ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${silenceDuration} -y "${silencePath}"`);
-    
+    await execAsync(
+      `ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${silenceDuration} -y "${silencePath}"`,
+    );
+
     // Create file list for ffmpeg concat - use absolute paths
     const fileListContent = [];
     for (let i = 0; i < chunkFiles.length; i++) {
       const absolutePath = path.resolve(chunkFiles[i]);
-      
+
       // Verify file exists before adding to list
       try {
         await fs.access(absolutePath);
         fileListContent.push(`file '${absolutePath}'`);
-        
+
         // Add silence between chunks (except after the last one)
         if (i < chunkFiles.length - 1) {
           fileListContent.push(`file '${silencePath}'`);
@@ -574,29 +648,31 @@ async function concatenateAudioWithSilence(chunkFiles, outputPath, options = {})
         console.warn(`Skipping missing chunk file: ${absolutePath}`);
       }
     }
-    
+
     if (fileListContent.length === 0) {
-      throw new Error('No valid chunk files found');
+      throw new Error("No valid chunk files found");
     }
-    
-    await fs.writeFile(fileListPath, fileListContent.join('\n'));
-    
+
+    await fs.writeFile(fileListPath, fileListContent.join("\n"));
+
     // Concatenate using ffmpeg with copy codec to preserve original encoding
     const absoluteOutputPath = path.resolve(outputPath);
     const ffmpegCommand = `ffmpeg -f concat -safe 0 -i "${fileListPath}" -c copy -y "${absoluteOutputPath}"`;
     await execAsync(ffmpegCommand);
-    
+
     // Clean up temporary files
     try {
       await fs.unlink(fileListPath);
       await fs.unlink(silencePath);
     } catch (cleanupError) {
-      console.warn('Failed to clean up temporary files:', cleanupError);
+      console.warn("Failed to clean up temporary files:", cleanupError);
     }
-    
-    console.log(`Successfully concatenated ${chunkFiles.length} audio files with ${silenceDuration}s silence gaps`);
+
+    console.log(
+      `Successfully concatenated ${chunkFiles.length} audio files with ${silenceDuration}s silence gaps`,
+    );
   } catch (error) {
-    console.error('ffmpeg concatenation failed:', error);
+    console.error("ffmpeg concatenation failed:", error);
     throw new Error(`Audio concatenation failed: ${error.message}`);
   }
 }
@@ -605,52 +681,83 @@ async function concatenateAudioWithSilence(chunkFiles, outputPath, options = {})
 async function processUrl(url) {
   const hash = generateHash(url);
   const urlDir = path.join(DATA_DIR, hash);
-  
+
   try {
     // Step 1: Store URL info
     const infoResult = await storeUrlInfo(url, urlDir);
     if (!infoResult.success) {
-      return { success: false, message: `Failed at step 1: ${infoResult.error}`, hash };
+      return {
+        success: false,
+        message: `Failed at step 1: ${infoResult.error}`,
+        hash,
+      };
     }
-    
+
     // Step 2: Fetch and store HTML
     const htmlResult = await fetchAndStoreHtml(url, urlDir);
     if (!htmlResult.success) {
-      return { success: false, message: `Failed at step 2: ${htmlResult.error}`, hash };
+      return {
+        success: false,
+        message: `Failed at step 2: ${htmlResult.error}`,
+        hash,
+      };
     }
-    
+
     // Step 3: Process with Readability
-    const readabilityResult = await processWithReadability(url, urlDir, htmlResult.htmlContent);
+    const readabilityResult = await processWithReadability(
+      url,
+      urlDir,
+      htmlResult.htmlContent,
+    );
     if (!readabilityResult.success) {
-      return { success: false, message: `Failed at step 3: ${readabilityResult.error}`, hash };
+      return {
+        success: false,
+        message: `Failed at step 3: ${readabilityResult.error}`,
+        hash,
+      };
     }
-    
+
     // Step 4: Convert to text
-    const textResult = await convertToText(url, urlDir, readabilityResult.article);
+    const textResult = await convertToText(
+      url,
+      urlDir,
+      readabilityResult.article,
+    );
     if (!textResult.success) {
-      return { success: false, message: `Failed at step 4: ${textResult.error}`, hash };
+      return {
+        success: false,
+        message: `Failed at step 4: ${textResult.error}`,
+        hash,
+      };
     }
-    
+
     // Step 5: Generate TTS audio
-    const ttsResult = await generateTtsAudio(url, urlDir, textResult.textChunks);
+    const ttsResult = await generateTtsAudio(
+      url,
+      urlDir,
+      textResult.textChunks,
+    );
     if (!ttsResult.success) {
-      return { success: false, message: `Failed at step 5: ${ttsResult.error}`, hash };
+      return {
+        success: false,
+        message: `Failed at step 5: ${ttsResult.error}`,
+        hash,
+      };
     }
-    
+
     console.log(`Successfully processed: ${url}`);
-    return { 
-      success: true, 
-      message: 'URL processed successfully', 
+    return {
+      success: true,
+      message: "URL processed successfully",
       hash,
       steps: {
-        info: infoResult.skipped ? 'skipped' : 'processed',
-        html: htmlResult.skipped ? 'skipped' : 'processed',
-        readability: readabilityResult.skipped ? 'skipped' : 'processed',
-        text: textResult.skipped ? 'skipped' : 'processed',
-        tts: ttsResult.skipped ? 'skipped' : 'processed'
-      }
+        info: infoResult.skipped ? "skipped" : "processed",
+        html: htmlResult.skipped ? "skipped" : "processed",
+        readability: readabilityResult.skipped ? "skipped" : "processed",
+        text: textResult.skipped ? "skipped" : "processed",
+        tts: ttsResult.skipped ? "skipped" : "processed",
+      },
     };
-    
   } catch (error) {
     console.error(`Error processing URL ${url}:`, error);
     return { success: false, message: error.message, hash };
@@ -660,209 +767,222 @@ async function processUrl(url) {
 // API Routes
 
 // Health check endpoint
-app.get('/api/health', async (req, res) => {
+app.get("/api/health", async (req, res) => {
   try {
     // Test Kokoro API
     const testMp3 = await Promise.race([
       openai.audio.speech.create({
         model: "model_q8f16",
         voice: "af_heart",
-        input: "Health check"
+        input: "Health check",
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 10000))
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Health check timeout")), 10000),
+      ),
     ]);
-    
+
     res.json({
-      status: 'healthy',
-      kokoroApi: 'connected',
-      timestamp: new Date().toISOString()
+      status: "healthy",
+      kokoroApi: "connected",
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     res.status(503).json({
-      status: 'unhealthy',
-      kokoroApi: 'disconnected',
+      status: "unhealthy",
+      kokoroApi: "disconnected",
       error: error.message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 });
 
 // Get all URLs
-app.get('/api/urls', basicAuth, async (req, res) => {
+app.get("/api/urls", basicAuth, async (req, res) => {
   const urls = await loadUrls();
   res.json(urls);
 });
 
 // Add new URL
-app.post('/api/urls', basicAuth, async (req, res) => {
+app.post("/api/urls", basicAuth, async (req, res) => {
   const { url } = req.body;
-  
+
   if (!url) {
-    return res.status(400).json({ error: 'URL is required' });
+    return res.status(400).json({ error: "URL is required" });
   }
-  
+
   // Trim URL
   const trimmedUrl = url.trim();
-  
-  if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
-    return res.status(400).json({ error: 'Invalid URL format' });
+
+  if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+    return res.status(400).json({ error: "Invalid URL format" });
   }
-  
+
   const urls = await loadUrls();
-  
+
   // Check if URL already exists (handle both string and object formats)
-  const urlExists = urls.some(item => {
-    const existingUrl = typeof item === 'string' ? item : item.url;
+  const urlExists = urls.some((item) => {
+    const existingUrl = typeof item === "string" ? item : item.url;
     return existingUrl === trimmedUrl;
   });
-  
+
   if (urlExists) {
-    return res.status(400).json({ error: 'URL already exists' });
+    return res.status(400).json({ error: "URL already exists" });
   }
-  
+
   // Add URL with timestamp
   const urlEntry = {
     url: trimmedUrl,
-    addedAt: new Date().toISOString()
+    addedAt: new Date().toISOString(),
   };
-  
+
   urls.push(urlEntry);
   await saveUrls(urls);
-  
+
   // Process URL in background
-  processUrl(trimmedUrl).then(result => {
-    console.log('Processing result:', result);
+  processUrl(trimmedUrl).then((result) => {
+    console.log("Processing result:", result);
   });
-  
+
   res.json({ success: true, url: trimmedUrl, addedAt: urlEntry.addedAt });
 });
 
 // Delete URL
-app.delete('/api/urls/:index', basicAuth, async (req, res) => {
+app.delete("/api/urls/:index", basicAuth, async (req, res) => {
   const index = parseInt(req.params.index);
   const urls = await loadUrls();
-  
+
   if (index < 0 || index >= urls.length) {
-    return res.status(404).json({ error: 'URL not found' });
+    return res.status(404).json({ error: "URL not found" });
   }
-  
+
   const removedUrlEntry = urls.splice(index, 1)[0];
-  const removedUrl = typeof removedUrlEntry === 'string' ? removedUrlEntry : removedUrlEntry.url;
+  const removedUrl =
+    typeof removedUrlEntry === "string" ? removedUrlEntry : removedUrlEntry.url;
   await saveUrls(urls);
-  
+
   // Optionally remove processed data
   const hash = generateHash(removedUrl);
   const urlDir = path.join(DATA_DIR, hash);
   try {
     await fs.rm(urlDir, { recursive: true, force: true });
   } catch (error) {
-    console.error('Error removing processed data:', error);
+    console.error("Error removing processed data:", error);
   }
-  
+
   res.json({ success: true, removedUrl });
 });
 
 // Process all URLs
-app.post('/api/process-all', basicAuth, async (req, res) => {
+app.post("/api/process-all", basicAuth, async (req, res) => {
   const urls = await loadUrls();
-  
+
   if (urls.length === 0) {
-    return res.json({ message: 'No URLs to process' });
+    return res.json({ message: "No URLs to process" });
   }
-  
+
   // Process URLs sequentially to avoid overwhelming the system
   const results = [];
   for (const urlEntry of urls) {
-    const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+    const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
     const result = await processUrl(url);
     results.push({ url, ...result });
   }
-  
+
   res.json({ results });
 });
 
 // Get processed data for a URL
-app.get('/api/processed/:hash', basicAuth, async (req, res) => {
+app.get("/api/processed/:hash", basicAuth, async (req, res) => {
   const { hash } = req.params;
   const urlDir = path.join(DATA_DIR, hash);
-  
+
   try {
-    const info = JSON.parse(await fs.readFile(path.join(urlDir, 'info.json'), 'utf8'));
-    const textData = JSON.parse(await fs.readFile(path.join(urlDir, 'text.json'), 'utf8'));
-    
+    const info = JSON.parse(
+      await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
+    );
+    const textData = JSON.parse(
+      await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
+    );
+
     // Check if audio file exists
-    const audioExists = await fs.access(path.join(urlDir, 'text.mp3')).then(() => true).catch(() => false);
-    
+    const audioExists = await fs
+      .access(path.join(urlDir, "text.mp3"))
+      .then(() => true)
+      .catch(() => false);
+
     res.json({
       info,
       textChunks: textData.chunks || [],
       // Maintain backward compatibility
-      text: textData.chunks ? textData.chunks.map(chunk => chunk.text).join(' ') : textData.text || '',
-      audioAvailable: audioExists
+      text: textData.chunks
+        ? textData.chunks.map((chunk) => chunk.text).join(" ")
+        : textData.text || "",
+      audioAvailable: audioExists,
     });
   } catch (error) {
-    res.status(404).json({ error: 'Processed data not found' });
+    res.status(404).json({ error: "Processed data not found" });
   }
 });
 
 // Get processing status for a URL
-app.get('/api/status/:hash', basicAuth, async (req, res) => {
+app.get("/api/status/:hash", basicAuth, async (req, res) => {
   const { hash } = req.params;
   const status = await getUrlStatus(hash);
   res.json(status);
 });
 
 // Get detailed progress for audio generation
-app.get('/api/progress/:hash', basicAuth, async (req, res) => {
+app.get("/api/progress/:hash", basicAuth, async (req, res) => {
   const { hash } = req.params;
-  
+
   if (audioProgress[hash]) {
     const progress = audioProgress[hash];
     const elapsed = Date.now() - progress.startTime;
-    const avgTimePerChunk = progress.currentChunk > 0 ? elapsed / progress.currentChunk : 0;
+    const avgTimePerChunk =
+      progress.currentChunk > 0 ? elapsed / progress.currentChunk : 0;
     const estimatedTotal = avgTimePerChunk * progress.totalChunks;
     const estimatedRemaining = Math.max(0, estimatedTotal - elapsed);
-    
+
     res.json({
       ...progress,
       elapsedMs: elapsed,
       estimatedRemainingMs: estimatedRemaining,
-      avgTimePerChunkMs: avgTimePerChunk
+      avgTimePerChunkMs: avgTimePerChunk,
     });
   } else {
-    res.json({ status: 'not_generating' });
+    res.json({ status: "not_generating" });
   }
 });
 
 // Get status for all URLs
-app.get('/api/status-all', basicAuth, async (req, res) => {
+app.get("/api/status-all", basicAuth, async (req, res) => {
   try {
     const urls = await loadUrls();
     const statuses = {};
-    
+
     for (const urlEntry of urls) {
-      const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+      const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
       const hash = generateHash(url);
       statuses[url] = await getUrlStatus(hash);
     }
-    
+
     res.json(statuses);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to get status' });
+    res.status(500).json({ error: "Failed to get status" });
   }
 });
 
 // Serve audio file
-app.get('/api/audio/:hash', basicAuth, async (req, res) => {
+app.get("/api/audio/:hash", basicAuth, async (req, res) => {
   const { hash } = req.params;
-  const audioPath = path.join(DATA_DIR, hash, 'text.mp3');
-  
+  const audioPath = path.join(DATA_DIR, hash, "text.mp3");
+
   try {
     await fs.access(audioPath);
-    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader("Content-Type", "audio/mpeg");
     res.sendFile(audioPath);
   } catch (error) {
-    res.status(404).json({ error: 'Audio file not found' });
+    res.status(404).json({ error: "Audio file not found" });
   }
 });
 
@@ -877,49 +997,66 @@ function escapeXml(unsafe) {
 }
 
 // Generate RSS feed
-app.get('/rss', async (req, res) => {
+app.get("/rss", async (req, res) => {
   try {
     const urls = await loadUrls();
     const completedUrls = [];
-    
+
     for (const urlEntry of urls) {
-      const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+      const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
       const hash = generateHash(url);
       const status = await getUrlStatus(hash);
-      
-      if (status.status === 'completed') {
+
+      if (status.status === "completed") {
         const urlDir = path.join(DATA_DIR, hash);
         try {
-          const info = JSON.parse(await fs.readFile(path.join(urlDir, 'info.json'), 'utf8'));
-          const textData = JSON.parse(await fs.readFile(path.join(urlDir, 'text.json'), 'utf8'));
-          
+          const info = JSON.parse(
+            await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
+          );
+          const textData = JSON.parse(
+            await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
+          );
+
           // Try to get the title from the first chunk if it's a heading
           let title = url;
-          if (textData.chunks && textData.chunks.length > 0 && textData.chunks[0].type === 'h') {
+          if (
+            textData.chunks &&
+            textData.chunks.length > 0 &&
+            textData.chunks[0].type === "h"
+          ) {
             title = textData.chunks[0].text;
           }
-          
+
           completedUrls.push({
             url,
             hash,
             title,
             processedAt: info.processedAt,
-            addedAt: typeof urlEntry === 'object' ? urlEntry.addedAt : null,
-            description: textData.chunks ? textData.chunks.slice(0, 3).map(chunk => chunk.text).join(' ').substring(0, 200) + '...' : ''
+            addedAt: typeof urlEntry === "object" ? urlEntry.addedAt : null,
+            description: textData.chunks
+              ? textData.chunks
+                  .slice(0, 3)
+                  .map((chunk) => chunk.text)
+                  .join(" ")
+                  .substring(0, 200) + "..."
+              : "",
           });
         } catch (error) {
-          console.error('Error reading info for', url, error);
+          console.error("Error reading info for", url, error);
         }
       }
     }
-    
+
     // Sort by processedAt date (newest first)
-    completedUrls.sort((a, b) => new Date(b.processedAt) - new Date(a.processedAt));
-    
+    completedUrls.sort(
+      (a, b) => new Date(b.processedAt) - new Date(a.processedAt),
+    );
+
     // Get the base URL for audio links
-    const baseUrl = req.protocol + '://' + req.get('host');
-    const coverImageUrl = 'https://avatar.signalwerk.ch/latest/w2000/signalwerk.png';
-    
+    const baseUrl = req.protocol + "://" + req.get("host");
+    const coverImageUrl =
+      "https://avatar.signalwerk.ch/latest/w2000/signalwerk.png";
+
     // Generate RSS XML
     const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
@@ -943,7 +1080,9 @@ app.get('/rss', async (req, res) => {
       <title>Kokoro TTS - Web Content Audio</title>
       <link>${baseUrl}</link>
     </image>
-${completedUrls.map(item => `    <item>
+${completedUrls
+  .map(
+    (item) => `    <item>
       <title>${escapeXml(item.title)}</title>
       <description>${escapeXml(item.description)}</description>
       <link>${escapeXml(item.url)}</link>
@@ -953,16 +1092,17 @@ ${completedUrls.map(item => `    <item>
       <itunes:image href="${coverImageUrl}"/>
       <itunes:duration>00:00:00</itunes:duration>
       <itunes:summary>${escapeXml(item.description)}</itunes:summary>
-    </item>`).join('\n')}
+    </item>`,
+  )
+  .join("\n")}
   </channel>
 </rss>`;
-    
-    res.setHeader('Content-Type', 'application/rss+xml; charset=utf-8');
+
+    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
     res.send(rssXml);
-    
   } catch (error) {
-    console.error('Error generating RSS feed:', error);
-    res.status(500).send('Error generating RSS feed');
+    console.error("Error generating RSS feed:", error);
+    res.status(500).send("Error generating RSS feed");
   }
 });
 
@@ -972,7 +1112,7 @@ await ensureDataDir();
 app.listen(PORT, async () => {
   console.log(`URL Processor service running on port ${PORT}`);
   console.log(`Kokoro API URL: ${cleanKokoroUrl}`);
-  
+
   // Test Kokoro connection after a brief delay
   setTimeout(testKokoroConnection, 2000);
 });
