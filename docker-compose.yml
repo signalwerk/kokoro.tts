@@ -6,7 +6,7 @@ services:
     environment:
       - KW_SECRET_API_KEY=${KOKORO_API_KEY}
     volumes:
-      - ./DATA/tts/kokoro/cache:/kokoro/cache
+      - /DATA/tts/kokoro/cache:/kokoro/cache
     restart: unless-stopped
 
   url-processor:
@@ -17,7 +17,7 @@ services:
       - KOKORO_API_KEY=${KOKORO_API_KEY}
       - KOKORO_API_URL=${KOKORO_API_URL}
     volumes:
-      - ./DATA/tts/kokoro/data:/kokoro/data
+      - /DATA/tts/kokoro/data:/kokoro/data
     depends_on:
       - kokoro-web
     restart: unless-stopped
