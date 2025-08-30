@@ -368,8 +368,8 @@ app.get("/api/audio/:hash", async (req, res) => {
   }
 });
 
-// Generate RSS feed (NO AUTH REQUIRED)
-app.get("/rss", async (req, res) => {
+// Generate RSS feed
+app.get("/rss", basicAuth, async (req, res) => {
   try {
     const urls = await loadUrls();
     const completedUrls = [];
