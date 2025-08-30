@@ -1,782 +1,848 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>URL Processor & TTS</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            line-height: 1.6;
-            background-color: #f5f5f5;
-        }
-        
-        .container {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        h1 {
-            color: #333;
-            margin-bottom: 30px;
-            text-align: center;
-        }
-        
-        .input-section {
-            margin-bottom: 30px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }
-        
-        .input-group {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-        
-        input[type="url"] {
-            flex: 1;
-            padding: 12px;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            font-size: 16px;
-        }
-        
-        input[type="url"]:focus {
-            outline: none;
-            border-color: #007bff;
-        }
-        
-        button {
-            padding: 12px 20px;
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.2s;
-        }
-        
-        button:hover {
-            background: #0056b3;
-        }
-        
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        
-        .process-all-btn {
-            background: #28a745;
-            width: 100%;
-        }
-        
-        .process-all-btn:hover {
-            background: #1e7e34;
-        }
-        
-        .url-list {
-            margin-top: 30px;
-        }
-        
-        .url-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px;
-            margin-bottom: 10px;
-            background: #f8f9fa;
-            border-radius: 6px;
-            border-left: 4px solid #007bff;
-        }
-        
-        .url-content {
-            flex: 1;
-            margin-right: 15px;
-        }
-        
-        .url-text {
-            word-break: break-all;
-            margin-bottom: 5px;
-            font-weight: 500;
-        }
-        
-        .url-status {
-            font-size: 12px;
-            color: #666;
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
-        }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.6;
+        background-color: #f5f5f5;
+      }
 
-        .status-indicator {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 5px;
-        }
+      .container {
+        background: white;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
 
-        .status-not-started { background-color: #6c757d; }
-        .status-processing { background-color: #ffc107; animation: pulse 1.5s infinite; }
-        .status-completed { background-color: #28a745; }
-        .status-error { background-color: #dc3545; }
+      h1 {
+        color: #333;
+        margin-bottom: 30px;
+        text-align: center;
+      }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
+      .input-section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background: #f8f9fa;
+        border-radius: 8px;
+      }
 
-        .steps-progress {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
+      .input-group {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 15px;
+      }
 
-        .step-item {
-            display: flex;
-            flex-direction: column;
-        }
+      input[type="url"] {
+        flex: 1;
+        padding: 12px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        font-size: 16px;
+      }
 
-        .step-label {
-            font-size: 12px;
-            margin-bottom: 2px;
-        }
+      input[type="url"]:focus {
+        outline: none;
+        border-color: #007bff;
+      }
 
-        .step-bar {
-            width: 100%;
-            height: 4px;
-            background-color: #e9ecef;
-            border-radius: 2px;
-            overflow: hidden;
-        }
+      button {
+        padding: 12px 20px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.2s;
+      }
 
-        .step-fill {
-            height: 100%;
-            width: 0;
-            background-color: #007bff;
-            transition: width 0.3s ease;
-        }
+      button:hover {
+        background: #0056b3;
+      }
 
-        .step-fill.completed {
-            background-color: #28a745;
-            width: 100%;
-        }
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
 
-        .step-fill.processing {
-            background-color: #ffc107;
-        }
+      .process-all-btn {
+        background: #28a745;
+        width: 100%;
+      }
 
-        .chunk-progress {
-            display: flex;
-            gap: 2px;
-            margin-top: 4px;
-        }
+      .process-all-btn:hover {
+        background: #1e7e34;
+      }
 
-        .chunk-bar {
-            flex: 1;
-            height: 4px;
-            background-color: #e9ecef;
-            border-radius: 2px;
-            overflow: hidden;
-        }
+      .url-list {
+        margin-top: 30px;
+      }
 
-        .chunk-fill {
-            height: 100%;
-            width: 0;
-            background-color: #007bff;
-        }
+      .url-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        margin-bottom: 10px;
+        background: #f8f9fa;
+        border-radius: 6px;
+        border-left: 4px solid #007bff;
+      }
 
-        .chunk-fill.completed {
-            background-color: #28a745;
-            width: 100%;
-        }
+      .url-content {
+        flex: 1;
+        margin-right: 15px;
+      }
 
-        .chunk-fill.processing {
-            background-color: #ffc107;
-            width: 100%;
-        }
+      .url-text {
+        word-break: break-all;
+        margin-bottom: 5px;
+        font-weight: 500;
+      }
 
-        .audio-progress-details {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            margin-top: 6px;
-        }
+      .url-status {
+        font-size: 12px;
+        color: #666;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+      }
 
-        .progress-detail-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 11px;
-        }
+      .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 5px;
+      }
 
-        .progress-label {
-            min-width: 45px;
-            color: #666;
-            font-weight: 500;
-        }
+      .status-not-started {
+        background-color: #6c757d;
+      }
+      .status-processing {
+        background-color: #ffc107;
+        animation: pulse 1.5s infinite;
+      }
+      .status-completed {
+        background-color: #28a745;
+      }
+      .status-error {
+        background-color: #dc3545;
+      }
 
-        .progress-bar-small {
-            flex: 1;
-            height: 6px;
-            background-color: #e9ecef;
-            border-radius: 3px;
-            overflow: hidden;
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
         }
+        50% {
+          opacity: 0.5;
+        }
+      }
 
-        .progress-fill {
-            height: 100%;
-            width: 0;
-            background-color: #007bff;
-            transition: width 0.3s ease;
-        }
+      .steps-progress {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
 
-        .progress-fill.processing {
-            background-color: #ffc107;
-        }
+      .step-item {
+        display: flex;
+        flex-direction: column;
+      }
 
-        .progress-fill.completed {
-            background-color: #28a745;
-            width: 100%;
-        }
+      .step-label {
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
 
-        .progress-text {
-            min-width: 60px;
-            text-align: right;
-            color: #666;
-            font-size: 10px;
-        }
-        
-        .url-actions {
-            display: flex;
-            gap: 10px;
-        }
-        
-        .delete-btn {
-            background: #dc3545;
-            padding: 8px 15px;
-            font-size: 14px;
-        }
+      .step-bar {
+        width: 100%;
+        height: 4px;
+        background-color: #e9ecef;
+        border-radius: 2px;
+        overflow: hidden;
+      }
 
-        .delete-btn:hover {
-            background: #c82333;
-        }
+      .step-fill {
+        height: 100%;
+        width: 0;
+        background-color: #007bff;
+        transition: width 0.3s ease;
+      }
 
-        .delete-audio-btn {
-            background: #ffc107;
-            padding: 8px 15px;
-            font-size: 14px;
-        }
+      .step-fill.completed {
+        background-color: #28a745;
+        width: 100%;
+      }
 
-        .delete-audio-btn:hover {
-            background: #e0a800;
-        }
-        
-        .view-btn {
-            background: #17a2b8;
-            padding: 8px 15px;
-            font-size: 14px;
-        }
-        
-        .view-btn:hover {
-            background: #138496;
-        }
-        
-        .view-btn:disabled {
-            background: #6c757d;
-            cursor: not-allowed;
-            opacity: 0.6;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-        
-        .status {
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
-        }
-        
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .status.info {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
-        }
-        
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
-        
-        .modal-content {
-            background-color: white;
-            margin: 15% auto;
-            padding: 20px;
-            border-radius: 8px;
-            width: 80%;
-            max-width: 600px;
-            max-height: 70vh;
-            overflow-y: auto;
-        }
-        
-        .close {
-            color: #aaa;
-            float: right;
-            font-size: 28px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        
-        .close:hover {
-            color: black;
-        }
-        
-        .audio-player {
-            width: 100%;
-            margin: 15px 0;
-        }
-        
-        .text-content {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            white-space: pre-wrap;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        
-        .rss-info {
-            font-size: 14px;
-        }
-        
-        .rss-info h4 {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .copy-btn {
-            background: #4caf50;
-            color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 12px;
-            margin-left: 8px;
-        }
-        
-        .copy-btn:hover {
-            background: #45a049;
-        }
-        
-        .copy-btn:active {
-            background: #3d8b40;
-        }
-        
-        .url-meta {
-            font-size: 11px;
-            color: #888;
-            margin-top: 3px;
-            display: flex;
-            gap: 12px;
-        }
-        
-        .url-meta span {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
+      .step-fill.processing {
+        background-color: #ffc107;
+      }
+
+      .chunk-progress {
+        display: flex;
+        gap: 2px;
+        margin-top: 4px;
+      }
+
+      .chunk-bar {
+        flex: 1;
+        height: 4px;
+        background-color: #e9ecef;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      .chunk-fill {
+        height: 100%;
+        width: 0;
+        background-color: #007bff;
+      }
+
+      .chunk-fill.completed {
+        background-color: #28a745;
+        width: 100%;
+      }
+
+      .chunk-fill.processing {
+        background-color: #ffc107;
+        width: 100%;
+      }
+
+      .audio-progress-details {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 6px;
+      }
+
+      .progress-detail-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+      }
+
+      .progress-label {
+        min-width: 45px;
+        color: #666;
+        font-weight: 500;
+      }
+
+      .progress-bar-small {
+        flex: 1;
+        height: 6px;
+        background-color: #e9ecef;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0;
+        background-color: #007bff;
+        transition: width 0.3s ease;
+      }
+
+      .progress-fill.processing {
+        background-color: #ffc107;
+      }
+
+      .progress-fill.completed {
+        background-color: #28a745;
+        width: 100%;
+      }
+
+      .progress-text {
+        min-width: 60px;
+        text-align: right;
+        color: #666;
+        font-size: 10px;
+      }
+
+      .url-actions {
+        display: flex;
+        gap: 10px;
+      }
+
+      .delete-btn {
+        background: #dc3545;
+        padding: 8px 15px;
+        font-size: 14px;
+      }
+
+      .delete-btn:hover {
+        background: #c82333;
+      }
+
+      .delete-audio-btn {
+        background: #ffc107;
+        padding: 8px 15px;
+        font-size: 14px;
+      }
+
+      .delete-audio-btn:hover {
+        background: #e0a800;
+      }
+
+      .view-btn {
+        background: #17a2b8;
+        padding: 8px 15px;
+        font-size: 14px;
+      }
+
+      .view-btn:hover {
+        background: #138496;
+      }
+
+      .view-btn:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+      }
+
+      .status {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 4px;
+      }
+
+      .status.success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .status.error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .status.info {
+        background: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+
+      .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-content {
+        background-color: white;
+        margin: 15% auto;
+        padding: 20px;
+        border-radius: 8px;
+        width: 80%;
+        max-width: 600px;
+        max-height: 70vh;
+        overflow-y: auto;
+      }
+
+      .close {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+      }
+
+      .close:hover {
+        color: black;
+      }
+
+      .audio-player {
+        width: 100%;
+        margin: 15px 0;
+      }
+
+      .text-content {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 6px;
+        white-space: pre-wrap;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+
+      .rss-info {
+        font-size: 14px;
+      }
+
+      .rss-info h4 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .copy-btn {
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 12px;
+        margin-left: 8px;
+      }
+
+      .copy-btn:hover {
+        background: #45a049;
+      }
+
+      .copy-btn:active {
+        background: #3d8b40;
+      }
+
+      .url-meta {
+        font-size: 11px;
+        color: #888;
+        margin-top: 3px;
+        display: flex;
+        gap: 12px;
+      }
+
+      .url-meta span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="container">
-        <h1>🔊 URL Processor & Text-to-Speech</h1>
-        
-        <div class="input-section">
-            <div class="input-group">
-                <input type="url" id="urlInput" placeholder="Enter URL (e.g., https://example.com)" />
-                <button onclick="addUrl()" id="addBtn">Add URL</button>
-            </div>
-            <button onclick="processAll()" id="processAllBtn" class="process-all-btn">
-                🚀 Process All URLs
-            </button>
-            
-            <div id="rssInfo" class="rss-info" style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196f3;">
-                <h4 style="margin: 0 0 10px 0; color: #1976d2;">📡 RSS Feed Information</h4>
-                <div id="rssDetails">Loading RSS information...</div>
-            </div>
+      <h1>🔊 URL Processor & Text-to-Speech</h1>
+
+      <div class="input-section">
+        <div class="input-group">
+          <input
+            type="url"
+            id="urlInput"
+            placeholder="Enter URL (e.g., https://example.com)"
+          />
+          <button onclick="addUrl()" id="addBtn">Add URL</button>
         </div>
-        
-        <div id="status"></div>
-        
-        <div class="url-list">
-            <h3>URL List</h3>
-            <div id="urlListContainer">
-                <div class="empty-state">No URLs added yet</div>
-            </div>
+        <button
+          onclick="processAll()"
+          id="processAllBtn"
+          class="process-all-btn"
+        >
+          🚀 Process All URLs
+        </button>
+
+        <div
+          id="rssInfo"
+          class="rss-info"
+          style="
+            margin-top: 20px;
+            padding: 15px;
+            background: #e3f2fd;
+            border-radius: 6px;
+            border-left: 4px solid #2196f3;
+          "
+        >
+          <h4 style="margin: 0 0 10px 0; color: #1976d2">
+            📡 RSS Feed Information
+          </h4>
+          <div id="rssDetails">Loading RSS information...</div>
         </div>
+      </div>
+
+      <div id="status"></div>
+
+      <div class="url-list">
+        <h3>URL List</h3>
+        <div id="urlListContainer">
+          <div class="empty-state">No URLs added yet</div>
+        </div>
+      </div>
     </div>
-    
+
     <!-- Modal for viewing processed content -->
     <div id="contentModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <h3 id="modalTitle">Processed Content</h3>
-            <div id="modalContent"></div>
-        </div>
+      <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <h3 id="modalTitle">Processed Content</h3>
+        <div id="modalContent"></div>
+      </div>
     </div>
-    
+
     <script>
-        let urls = [];
-        let urlStatuses = {};
-        let statusInterval = null;
-        
-        // Load URLs on page load
-        window.onload = function() {
-            loadUrls();
-            renderRssInfo(); // Render RSS info immediately with calculated URL
-            startStatusPolling();
-        };
-        
-        // Clean up when page is closed
-        window.onbeforeunload = function() {
-            if (statusInterval) {
-                clearInterval(statusInterval);
-            }
-        };
-        
-        // Start polling for status updates
-        function startStatusPolling() {
-            // Clear any existing interval
-            if (statusInterval) {
-                clearInterval(statusInterval);
-            }
-            
-            // Poll every 1 second for more real-time updates during audio generation
-            statusInterval = setInterval(async () => {
-                if (urls.length > 0) {
-                    await updateAllStatuses();
-                    
-                    // Check if any URL is currently generating audio
-                    const hasAudioGeneration = Object.values(urlStatuses).some(status => 
-                        status.audioProgress && status.audioProgress.status === 'generating'
-                    );
-                    
-                    // If audio is being generated, poll more frequently
-                    if (hasAudioGeneration) {
-                        // Already polling every 1 second, which is good for audio generation
-                    }
-                }
-            }, 8000);
+      let urls = [];
+      let urlStatuses = {};
+      let statusInterval = null;
+
+      // Load URLs on page load
+      window.onload = function () {
+        loadUrls();
+        renderRssInfo(); // Render RSS info immediately with calculated URL
+        startStatusPolling();
+      };
+
+      // Clean up when page is closed
+      window.onbeforeunload = function () {
+        if (statusInterval) {
+          clearInterval(statusInterval);
         }
-        
-        // Update status for all URLs
-        async function updateAllStatuses() {
-            try {
-                const response = await fetch('/api/status-all');
-                if (response.ok) {
-                    urlStatuses = await response.json();
-                    renderUrls();
-                }
-            } catch (error) {
-                console.error('Error updating statuses:', error);
-            }
-        }
-        
-        // Show status message
-        function showStatus(message, type = 'info') {
-            const statusDiv = document.getElementById('status');
-            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
-            setTimeout(() => {
-                statusDiv.innerHTML = '';
-            }, 5000);
-        }
-        
-        // Load URLs from server
-        async function loadUrls() {
-            try {
-                const response = await fetch('/api/urls');
-                urls = await response.json();
-                
-                // Also load initial statuses
-                if (urls.length > 0) {
-                    await updateAllStatuses();
-                } else {
-                    renderUrls();
-                }
-                
-                // Update RSS info display when URLs change
-                renderRssInfo();
-            } catch (error) {
-                showStatus('Error loading URLs: ' + error.message, 'error');
-            }
-        }
-        
-        // Add new URL
-        async function addUrl() {
-            const urlInput = document.getElementById('urlInput');
-            const url = urlInput.value.trim();
-            
-            if (!url) {
-                showStatus('Please enter a URL', 'error');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/urls', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ url })
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    urlInput.value = '';
-                    showStatus('URL added successfully! Processing will start automatically.', 'success');
-                    await loadUrls();
-                    
-                    // Immediately start tracking status for new URL
-                    await updateAllStatuses();
-                } else {
-                    showStatus('Error: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showStatus('Error adding URL: ' + error.message, 'error');
-            }
-        }
-        
-        // Delete URL
-        async function deleteUrl(index) {
-            const urlEntry = urls[index];
-            const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
-            
-            if (!confirm(`Are you sure you want to delete this URL?\n\n${url}\n\nThis will also delete all processed data for this URL.`)) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/api/urls/${index}`, {
-                    method: 'DELETE'
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    showStatus('URL and all associated data deleted successfully', 'success');
-                    
-                    // Remove from local status tracking
-                    delete urlStatuses[url];
-                    
-                    await loadUrls();
-                } else {
-                    showStatus('Error deleting URL: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showStatus('Error deleting URL: ' + error.message, 'error');
-            }
+      };
+
+      // Start polling for status updates
+      function startStatusPolling() {
+        // Clear any existing interval
+        if (statusInterval) {
+          clearInterval(statusInterval);
         }
 
-        // Delete generated audio but keep URL
-        async function deleteAudio(index) {
-            const urlEntry = urls[index];
-            const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+        // Poll every 1 second for more real-time updates during audio generation
+        statusInterval = setInterval(async () => {
+          if (urls.length > 0) {
+            await updateAllStatuses();
 
-            if (!confirm(`Delete generated audio for this URL?\n\n${url}\n\nYou can reprocess it later.`)) {
-                return;
+            // Check if any URL is currently generating audio
+            const hasAudioGeneration = Object.values(urlStatuses).some(
+              (status) =>
+                status.audioProgress &&
+                status.audioProgress.status === "generating",
+            );
+
+            // If audio is being generated, poll more frequently
+            if (hasAudioGeneration) {
+              // Already polling every 1 second, which is good for audio generation
             }
+          }
+        }, 8000);
+      }
 
-            try {
-                const response = await fetch(`/api/urls/${index}/audio`, {
-                    method: 'DELETE'
-                });
+      // Update status for all URLs
+      async function updateAllStatuses() {
+        try {
+          const response = await fetch("/api/status-all");
+          if (response.ok) {
+            urlStatuses = await response.json();
+            renderUrls();
+          }
+        } catch (error) {
+          console.error("Error updating statuses:", error);
+        }
+      }
 
-                const result = await response.json();
+      // Show status message
+      function showStatus(message, type = "info") {
+        const statusDiv = document.getElementById("status");
+        statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        setTimeout(() => {
+          statusDiv.innerHTML = "";
+        }, 5000);
+      }
 
-                if (response.ok) {
-                    showStatus('Audio deleted successfully', 'success');
-                    await updateAllStatuses();
-                } else {
-                    showStatus('Error deleting audio: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showStatus('Error deleting audio: ' + error.message, 'error');
-            }
+      // Load URLs from server
+      async function loadUrls() {
+        try {
+          const response = await fetch("/api/urls");
+          urls = await response.json();
+
+          // Also load initial statuses
+          if (urls.length > 0) {
+            await updateAllStatuses();
+          } else {
+            renderUrls();
+          }
+
+          // Update RSS info display when URLs change
+          renderRssInfo();
+        } catch (error) {
+          showStatus("Error loading URLs: " + error.message, "error");
+        }
+      }
+
+      // Add new URL
+      async function addUrl() {
+        const urlInput = document.getElementById("urlInput");
+        const url = urlInput.value.trim();
+
+        if (!url) {
+          showStatus("Please enter a URL", "error");
+          return;
         }
 
-        // Process all URLs
-        async function processAll() {
-            if (urls.length === 0) {
-                showStatus('No URLs to process', 'info');
-                return;
-            }
-            
-            const processBtn = document.getElementById('processAllBtn');
-            processBtn.disabled = true;
-            processBtn.textContent = '⏳ Processing...';
-            
-            try {
-                showStatus('Processing all URLs... This may take a while.', 'info');
-                
-                const response = await fetch('/api/process-all', {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    const successful = result.results.filter(r => r.success).length;
-                    const total = result.results.length;
-                    showStatus(`Processing complete! ${successful}/${total} URLs processed successfully.`, 'success');
-                } else {
-                    showStatus('Error processing URLs: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showStatus('Error processing URLs: ' + error.message, 'error');
-            } finally {
-                processBtn.disabled = false;
-                processBtn.textContent = '🚀 Process All URLs';
-            }
+        try {
+          const response = await fetch("/api/urls", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url }),
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            urlInput.value = "";
+            showStatus(
+              "URL added successfully! Processing will start automatically.",
+              "success",
+            );
+            await loadUrls();
+
+            // Immediately start tracking status for new URL
+            await updateAllStatuses();
+          } else {
+            showStatus("Error: " + result.error, "error");
+          }
+        } catch (error) {
+          showStatus("Error adding URL: " + error.message, "error");
         }
-        
-        // Escape HTML for safe display
-        function escapeHtml(str) {
-            return str.replace(/[&<>"']/g, function(m) {
-                return {
-                    '&': '&amp;',
-                    '<': '&lt;',
-                    '>': '&gt;',
-                    '"': '&quot;',
-                    "'": '&#39;'
-                }[m];
-            });
+      }
+
+      // Delete URL
+      async function deleteUrl(index) {
+        const urlEntry = urls[index];
+        const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+
+        if (
+          !confirm(
+            `Are you sure you want to delete this URL?\n\n${url}\n\nThis will also delete all processed data for this URL.`,
+          )
+        ) {
+          return;
         }
 
-        // View processed content with step details
-        async function viewContent(url) {
-            const hash = await sha256(url);
+        try {
+          const response = await fetch(`/api/urls/${index}`, {
+            method: "DELETE",
+          });
 
-            try {
-                const response = await fetch(`/api/processed/${hash}`);
+          const result = await response.json();
 
-                if (!response.ok) {
-                    showStatus('Content not yet processed or failed to process', 'error');
-                    return;
-                }
+          if (response.ok) {
+            showStatus(
+              "URL and all associated data deleted successfully",
+              "success",
+            );
 
-                const data = await response.json();
+            // Remove from local status tracking
+            delete urlStatuses[url];
 
-                const modalTitle = document.getElementById('modalTitle');
-                const modalContent = document.getElementById('modalContent');
+            await loadUrls();
+          } else {
+            showStatus("Error deleting URL: " + result.error, "error");
+          }
+        } catch (error) {
+          showStatus("Error deleting URL: " + error.message, "error");
+        }
+      }
 
-                modalTitle.textContent = 'Processed Content';
+      // Delete generated audio but keep URL
+      async function deleteAudio(index) {
+        const urlEntry = urls[index];
+        const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
 
-                let content = '';
+        if (
+          !confirm(
+            `Delete generated audio for this URL?\n\n${url}\n\nYou can reprocess it later.`,
+          )
+        ) {
+          return;
+        }
 
-                if (data.info) {
-                    content += `
+        try {
+          const response = await fetch(`/api/urls/${index}/audio`, {
+            method: "DELETE",
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            showStatus("Audio deleted successfully", "success");
+            await updateAllStatuses();
+          } else {
+            showStatus("Error deleting audio: " + result.error, "error");
+          }
+        } catch (error) {
+          showStatus("Error deleting audio: " + error.message, "error");
+        }
+      }
+
+      // Process all URLs
+      async function processAll() {
+        if (urls.length === 0) {
+          showStatus("No URLs to process", "info");
+          return;
+        }
+
+        const processBtn = document.getElementById("processAllBtn");
+        processBtn.disabled = true;
+        processBtn.textContent = "⏳ Processing...";
+
+        try {
+          showStatus("Processing all URLs... This may take a while.", "info");
+
+          const response = await fetch("/api/process-all", {
+            method: "POST",
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            const successful = result.results.filter((r) => r.success).length;
+            const total = result.results.length;
+            showStatus(
+              `Processing complete! ${successful}/${total} URLs processed successfully.`,
+              "success",
+            );
+          } else {
+            showStatus("Error processing URLs: " + result.error, "error");
+          }
+        } catch (error) {
+          showStatus("Error processing URLs: " + error.message, "error");
+        } finally {
+          processBtn.disabled = false;
+          processBtn.textContent = "🚀 Process All URLs";
+        }
+      }
+
+      // Escape HTML for safe display
+      function escapeHtml(str) {
+        return str.replace(/[&<>"']/g, function (m) {
+          return {
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }[m];
+        });
+      }
+
+      // View processed content with step details
+      async function viewContent(url) {
+        const hash = await sha256(url);
+
+        try {
+          const response = await fetch(`/api/processed/${hash}`);
+
+          if (!response.ok) {
+            showStatus(
+              "Content not yet processed or failed to process",
+              "error",
+            );
+            return;
+          }
+
+          const data = await response.json();
+
+          const modalTitle = document.getElementById("modalTitle");
+          const modalContent = document.getElementById("modalContent");
+
+          modalTitle.textContent = "Processed Content";
+
+          let content = "";
+
+          if (data.info) {
+            content += `
                         <p><strong>URL:</strong> ${data.info.url}</p>
-                        ${data.info.processedAt ? `<p><strong>Processed:</strong> ${new Date(data.info.processedAt).toLocaleString()}</p>` : ''}
+                        ${
+                          data.info.processedAt
+                            ? `<p><strong>Processed:</strong> ${new Date(
+                                data.info.processedAt,
+                              ).toLocaleString()}</p>`
+                            : ""
+                        }
                     `;
-                }
+          }
 
-                if (data.html) {
-                    content += `
-                        <h3>Step 2: HTML</h3>
-                        <pre class="text-content">${escapeHtml(data.html)}</pre>
-                    `;
-                }
-
-                if (data.article) {
-                    content += `
-                        <h3>Step 3: Readability</h3>
-                        <div class="text-content">${escapeHtml(data.article.content || '')}</div>
-                    `;
-                }
-
-                if (data.textHTML) {
-                    content += `
-                        <h3>Step 4: Text</h3>
-                        <div class="text-content">${(data.textHTML)}</div>
-                    `;
-                }
-
-                if (data.audioAvailable) {
-                    content += `
+          if (data.audioAvailable) {
+            content += `
                         <h3>Step 5: Audio</h3>
                         <audio controls class="audio-player">
                             <source src="/api/audio/${hash}" type="audio/mpeg">
                             Your browser does not support the audio element.
                         </audio>
                     `;
-                }
+          }
 
-                modalContent.innerHTML = content;
-                document.getElementById('contentModal').style.display = 'block';
+          if (data.textHTML) {
+            content += `
+                        <h3>Step 4: Text</h3>
+                        <div class="text-content">${data.textHTML}</div>
+                    `;
+          }
 
-            } catch (error) {
-                showStatus('Error loading content: ' + error.message, 'error');
-            }
+          if (data.article) {
+            content += `
+                        <h3>Step 3: Readability</h3>
+                        <div class="text-content">${escapeHtml(
+                          data.article.content || "",
+                        )}</div>
+                    `;
+          }
+
+          if (data.html) {
+            content += `
+                        <h3>Step 2: HTML</h3>
+                        <pre class="text-content">${escapeHtml(data.html)}</pre>
+                    `;
+          }
+
+          modalContent.innerHTML = content;
+          document.getElementById("contentModal").style.display = "block";
+        } catch (error) {
+          showStatus("Error loading content: " + error.message, "error");
         }
-        
-        // Close modal
-        function closeModal() {
-            document.getElementById('contentModal').style.display = 'none';
+      }
+
+      // Close modal
+      function closeModal() {
+        document.getElementById("contentModal").style.display = "none";
+      }
+
+      // Click outside modal to close
+      window.onclick = function (event) {
+        const modal = document.getElementById("contentModal");
+        if (event.target === modal) {
+          modal.style.display = "none";
         }
-        
-        // Click outside modal to close
-        window.onclick = function(event) {
-            const modal = document.getElementById('contentModal');
-            if (event.target === modal) {
-                modal.style.display = 'none';
-            }
-        }
-        
-        // Render RSS information
-        function renderRssInfo() {
-            const rssDetails = document.getElementById('rssDetails');
-            
-            // Calculate RSS URL from current domain
-            const baseUrl = window.location.origin;
-            const rssUrl = `${baseUrl}/rss`;
-            
-            // Count completed URLs from status
-            const completedCount = Object.values(urlStatuses).filter(status => status.status === 'completed').length;
-            
-            rssDetails.innerHTML = `
+      };
+
+      // Render RSS information
+      function renderRssInfo() {
+        const rssDetails = document.getElementById("rssDetails");
+
+        // Calculate RSS URL from current domain
+        const baseUrl = window.location.origin;
+        const rssUrl = `${baseUrl}/rss`;
+
+        // Count completed URLs from status
+        const completedCount = Object.values(urlStatuses).filter(
+          (status) => status.status === "completed",
+        ).length;
+
+        rssDetails.innerHTML = `
                 <div style="margin-bottom: 8px;">
                     <strong>RSS Feed URL:</strong> 
                     <span style="font-family: monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px;">${rssUrl}</span>
@@ -786,53 +852,57 @@
                     <strong>📊 Status:</strong> ${completedCount} URL(s) processed and available in RSS feed
                 </div>
             `;
+      }
+
+      // Copy to clipboard function
+      async function copyToClipboard(text) {
+        try {
+          await navigator.clipboard.writeText(text);
+          showStatus("Copied to clipboard!", "success");
+        } catch (error) {
+          // Fallback for older browsers
+          const textArea = document.createElement("textarea");
+          textArea.value = text;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textArea);
+          showStatus("Copied to clipboard!", "success");
         }
-        
-        // Copy to clipboard function
-        async function copyToClipboard(text) {
-            try {
-                await navigator.clipboard.writeText(text);
-                showStatus('Copied to clipboard!', 'success');
-            } catch (error) {
-                // Fallback for older browsers
-                const textArea = document.createElement('textarea');
-                textArea.value = text;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-                showStatus('Copied to clipboard!', 'success');
-            }
-        }
+      }
 
-        function generateStepBars(status) {
-            const steps = [
-                { id: 1, label: 'Store URL info' },
-                { id: 2, label: 'Fetch HTML' },
-                { id: 3, label: 'Process content' },
-                { id: 4, label: 'Extract text' },
-                { id: 5, label: 'Generate audio' }
-            ];
+      function generateStepBars(status) {
+        const steps = [
+          { id: 1, label: "Store URL info" },
+          { id: 2, label: "Fetch HTML" },
+          { id: 3, label: "Process content" },
+          { id: 4, label: "Extract text" },
+          { id: 5, label: "Generate audio" },
+        ];
 
-            return steps.map(step => {
-                let fillWidth = 0;
-                let fillClass = '';
-                let progressDetails = '';
+        return steps
+          .map((step) => {
+            let fillWidth = 0;
+            let fillClass = "";
+            let progressDetails = "";
 
-                if (step.id < 5) {
-                    if (status.step >= step.id) {
-                        fillWidth = 100;
-                        fillClass = 'completed';
-                    } else if (status.step + 1 === step.id && status.status === 'processing') {
-                        fillWidth = 50;
-                        fillClass = 'processing';
-                    }
-                } else {
-                    // Audio generation step - show two separate progress bars
-                    if (status.status === 'completed') {
-                        fillWidth = 100;
-                        fillClass = 'completed';
-                        progressDetails = `
+            if (step.id < 5) {
+              if (status.step >= step.id) {
+                fillWidth = 100;
+                fillClass = "completed";
+              } else if (
+                status.step + 1 === step.id &&
+                status.status === "processing"
+              ) {
+                fillWidth = 50;
+                fillClass = "processing";
+              }
+            } else {
+              // Audio generation step - show two separate progress bars
+              if (status.status === "completed") {
+                fillWidth = 100;
+                fillClass = "completed";
+                progressDetails = `
                             <div class="audio-progress-details">
                                 <div class="progress-detail-item">
                                     <span class="progress-label">Chunks:</span>
@@ -850,14 +920,18 @@
                                 </div>
                             </div>
                         `;
-                    } else if (status.audioProgress) {
-                        const progress = status.audioProgress;
+              } else if (status.audioProgress) {
+                const progress = status.audioProgress;
 
-                        if (progress.status === 'generating') {
-                            fillWidth = Math.round((progress.currentChunk / progress.totalChunks) * 100);
-                            fillClass = 'processing';
-                            const chunkProgressPercent = Math.round((progress.currentChunk / progress.totalChunks) * 100);
-                            progressDetails = `
+                if (progress.status === "generating") {
+                  fillWidth = Math.round(
+                    (progress.currentChunk / progress.totalChunks) * 100,
+                  );
+                  fillClass = "processing";
+                  const chunkProgressPercent = Math.round(
+                    (progress.currentChunk / progress.totalChunks) * 100,
+                  );
+                  progressDetails = `
                                 <div class="audio-progress-details">
                                     <div class="progress-detail-item">
                                         <span class="progress-label">Chunks:</span>
@@ -875,10 +949,10 @@
                                     </div>
                                 </div>
                             `;
-                        } else if (progress.status === 'concatenating') {
-                            fillWidth = 100;
-                            fillClass = 'processing';
-                            progressDetails = `
+                } else if (progress.status === "concatenating") {
+                  fillWidth = 100;
+                  fillClass = "processing";
+                  progressDetails = `
                                 <div class="audio-progress-details">
                                     <div class="progress-detail-item">
                                         <span class="progress-label">Chunks:</span>
@@ -896,11 +970,14 @@
                                     </div>
                                 </div>
                             `;
-                        }
-                    } else if (status.step + 1 === step.id && status.status === 'processing') {
-                        fillWidth = 50;
-                        fillClass = 'processing';
-                        progressDetails = `
+                }
+              } else if (
+                status.step + 1 === step.id &&
+                status.status === "processing"
+              ) {
+                fillWidth = 50;
+                fillClass = "processing";
+                progressDetails = `
                             <div class="audio-progress-details">
                                 <div class="progress-detail-item">
                                     <span class="progress-label">Chunks:</span>
@@ -918,48 +995,54 @@
                                 </div>
                             </div>
                         `;
-                    }
-                }
+              }
+            }
 
-                return `
+            return `
                     <div class="step-item">
                         <span class="step-label">${step.label}</span>
                         <div class="step-bar">
                             <div class="step-fill ${fillClass}" style="width:${fillWidth}%"></div>
                         </div>
-                        ${step.id === 5 ? progressDetails : ''}
+                        ${step.id === 5 ? progressDetails : ""}
                     </div>
                 `;
-            }).join('');
+          })
+          .join("");
+      }
+
+      // Render URLs list
+      function renderUrls() {
+        const container = document.getElementById("urlListContainer");
+
+        if (urls.length === 0) {
+          container.innerHTML =
+            '<div class="empty-state">No URLs added yet</div>';
+          return;
         }
 
-        // Render URLs list
-        function renderUrls() {
-            const container = document.getElementById('urlListContainer');
-            
-            if (urls.length === 0) {
-                container.innerHTML = '<div class="empty-state">No URLs added yet</div>';
-                return;
-            }
-            
-            container.innerHTML = urls.map((urlEntry, index) => {
-                const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
-                const addedAt = typeof urlEntry === 'object' ? urlEntry.addedAt : null;
-                
-                const status = urlStatuses[url] || { 
-                    status: 'not_started', 
-                    step: 0, 
-                    stepName: 'Not started', 
-                    progress: 0 
-                };
-                
-                const statusClass = `status-${status.status}`;
-                const stepBars = generateStepBars(status);
+        container.innerHTML = urls
+          .map((urlEntry, index) => {
+            const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+            const addedAt =
+              typeof urlEntry === "object" ? urlEntry.addedAt : null;
 
-                // Format dates
-                const addedDateStr = addedAt ? new Date(addedAt).toLocaleString() : 'Unknown';
-                
-                return `
+            const status = urlStatuses[url] || {
+              status: "not_started",
+              step: 0,
+              stepName: "Not started",
+              progress: 0,
+            };
+
+            const statusClass = `status-${status.status}`;
+            const stepBars = generateStepBars(status);
+
+            // Format dates
+            const addedDateStr = addedAt
+              ? new Date(addedAt).toLocaleString()
+              : "Unknown";
+
+            return `
                     <div class="url-item">
                         <div class="url-content">
                             <div class="url-text">${url}</div>
@@ -975,32 +1058,39 @@
                             <button class="view-btn" onclick="viewContent('${url}')">
                                 👁️ View
                             </button>
-                            <button class="delete-audio-btn" onclick="deleteAudio(${index})" ${status.status !== 'completed' ? 'disabled' : ''}>🗑️ Audio</button>
+                            <button class="delete-audio-btn" onclick="deleteAudio(${index})" ${
+              status.status !== "completed" ? "disabled" : ""
+            }>🗑️ Audio</button>
                             <button class="delete-btn" onclick="deleteUrl(${index})">🗑️ URL</button>
                         </div>
                     </div>
                 `;
-            }).join('');
-            
-            // Update RSS info when URLs are rendered
-            renderRssInfo();
-        }
-        
-        // Handle Enter key in URL input
-        document.getElementById('urlInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                addUrl();
-            }
+          })
+          .join("");
+
+        // Update RSS info when URLs are rendered
+        renderRssInfo();
+      }
+
+      // Handle Enter key in URL input
+      document
+        .getElementById("urlInput")
+        .addEventListener("keypress", function (e) {
+          if (e.key === "Enter") {
+            addUrl();
+          }
         });
-        
-        // Simple SHA-256 implementation for client-side hashing
-        async function sha256(message) {
-            const msgBuffer = new TextEncoder().encode(message);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            return hashHex;
-        }
+
+      // Simple SHA-256 implementation for client-side hashing
+      async function sha256(message) {
+        const msgBuffer = new TextEncoder().encode(message);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        return hashHex;
+      }
     </script>
-</body>
+  </body>
 </html>
