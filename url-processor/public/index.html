@@ -204,6 +204,57 @@
             background-color: #ffc107;
             width: 100%;
         }
+
+        .audio-progress-details {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .progress-detail-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+        }
+
+        .progress-label {
+            min-width: 45px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        .progress-bar-small {
+            flex: 1;
+            height: 6px;
+            background-color: #e9ecef;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill.processing {
+            background-color: #ffc107;
+        }
+
+        .progress-fill.completed {
+            background-color: #28a745;
+            width: 100%;
+        }
+
+        .progress-text {
+            min-width: 60px;
+            text-align: right;
+            color: #666;
+            font-size: 10px;
+        }
         
         .url-actions {
             display: flex;
@@ -766,7 +817,7 @@
             return steps.map(step => {
                 let fillWidth = 0;
                 let fillClass = '';
-                let chunkHtml = '';
+                let progressDetails = '';
 
                 if (step.id < 5) {
                     if (status.step >= step.id) {
@@ -777,31 +828,96 @@
                         fillClass = 'processing';
                     }
                 } else {
+                    // Audio generation step - show two separate progress bars
                     if (status.status === 'completed') {
                         fillWidth = 100;
                         fillClass = 'completed';
+                        progressDetails = `
+                            <div class="audio-progress-details">
+                                <div class="progress-detail-item">
+                                    <span class="progress-label">Chunks:</span>
+                                    <div class="progress-bar-small">
+                                        <div class="progress-fill completed" style="width: 100%"></div>
+                                    </div>
+                                    <span class="progress-text">Complete</span>
+                                </div>
+                                <div class="progress-detail-item">
+                                    <span class="progress-label">MP3:</span>
+                                    <div class="progress-bar-small">
+                                        <div class="progress-fill completed" style="width: 100%"></div>
+                                    </div>
+                                    <span class="progress-text">Complete</span>
+                                </div>
+                            </div>
+                        `;
                     } else if (status.audioProgress) {
                         const progress = status.audioProgress;
-                        fillWidth = progress.status === 'generating'
-                            ? Math.round((progress.currentChunk / progress.totalChunks) * 100)
-                            : 100;
-                        fillClass = 'processing';
 
-                        const chunks = Array.from({ length: progress.totalChunks }).map((_, i) => {
-                            let chunkClass = '';
-                            if (progress.status === 'concatenating') {
-                                chunkClass = 'completed';
-                            } else if (i < progress.currentChunk - 1) {
-                                chunkClass = 'completed';
-                            } else if (i === progress.currentChunk - 1) {
-                                chunkClass = 'processing';
-                            }
-                            return `<div class="chunk-bar"><div class="chunk-fill ${chunkClass}" style="width:${chunkClass ? '100' : '0'}%"></div></div>`;
-                        }).join('');
-                        chunkHtml = `<div class="chunk-progress">${chunks}</div>`;
+                        if (progress.status === 'generating') {
+                            fillWidth = Math.round((progress.currentChunk / progress.totalChunks) * 100);
+                            fillClass = 'processing';
+                            const chunkProgressPercent = Math.round((progress.currentChunk / progress.totalChunks) * 100);
+                            progressDetails = `
+                                <div class="audio-progress-details">
+                                    <div class="progress-detail-item">
+                                        <span class="progress-label">Chunks:</span>
+                                        <div class="progress-bar-small">
+                                            <div class="progress-fill processing" style="width: ${chunkProgressPercent}%"></div>
+                                        </div>
+                                        <span class="progress-text">${progress.currentChunk}/${progress.totalChunks}</span>
+                                    </div>
+                                    <div class="progress-detail-item">
+                                        <span class="progress-label">MP3:</span>
+                                        <div class="progress-bar-small">
+                                            <div class="progress-fill" style="width: 0%"></div>
+                                        </div>
+                                        <span class="progress-text">Pending</span>
+                                    </div>
+                                </div>
+                            `;
+                        } else if (progress.status === 'concatenating') {
+                            fillWidth = 100;
+                            fillClass = 'processing';
+                            progressDetails = `
+                                <div class="audio-progress-details">
+                                    <div class="progress-detail-item">
+                                        <span class="progress-label">Chunks:</span>
+                                        <div class="progress-bar-small">
+                                            <div class="progress-fill completed" style="width: 100%"></div>
+                                        </div>
+                                        <span class="progress-text">${progress.totalChunks}/${progress.totalChunks}</span>
+                                    </div>
+                                    <div class="progress-detail-item">
+                                        <span class="progress-label">MP3:</span>
+                                        <div class="progress-bar-small">
+                                            <div class="progress-fill processing" style="width: 100%"></div>
+                                        </div>
+                                        <span class="progress-text">Combining...</span>
+                                    </div>
+                                </div>
+                            `;
+                        }
                     } else if (status.step + 1 === step.id && status.status === 'processing') {
                         fillWidth = 50;
                         fillClass = 'processing';
+                        progressDetails = `
+                            <div class="audio-progress-details">
+                                <div class="progress-detail-item">
+                                    <span class="progress-label">Chunks:</span>
+                                    <div class="progress-bar-small">
+                                        <div class="progress-fill" style="width: 0%"></div>
+                                    </div>
+                                    <span class="progress-text">0/0</span>
+                                </div>
+                                <div class="progress-detail-item">
+                                    <span class="progress-label">MP3:</span>
+                                    <div class="progress-bar-small">
+                                        <div class="progress-fill" style="width: 0%"></div>
+                                    </div>
+                                    <span class="progress-text">Pending</span>
+                                </div>
+                            </div>
+                        `;
                     }
                 }
 
@@ -811,7 +927,7 @@
                         <div class="step-bar">
                             <div class="step-fill ${fillClass}" style="width:${fillWidth}%"></div>
                         </div>
-                        ${step.id === 5 ? chunkHtml : ''}
+                        ${step.id === 5 ? progressDetails : ''}
                     </div>
                 `;
             }).join('');
