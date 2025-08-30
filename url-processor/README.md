@@ -10,6 +10,7 @@ A Node.js service that processes URLs and converts their content to speech using
 - **Text-to-Speech**: Converts extracted text to MP3 audio using Kokoro TTS
 - **Audio Concatenation**: Professional audio concatenation with silence gaps using ffmpeg
 - **Data Storage**: Stores processed data in organized JSON files
+- **Audio Management**: Delete generated audio to allow reprocessing without removing URLs
 
 ## How it works
 
@@ -27,11 +28,10 @@ A Node.js service that processes URLs and converts their content to speech using
 
 The service uses ffmpeg for professional audio concatenation:
 
-### ffmpeg Concatenation with Stream Copy
-- Uses ffmpeg's concat demuxer for fast, lossless concatenation
-- Preserves original audio encoding and sample rate
-- Adds configurable silence gaps between chunks (default: 200ms)
-- Uses `-c copy` to avoid re-encoding, maintaining quality and speed
+### ffmpeg Concatenation
+- Uses ffmpeg's concat demuxer to join chunks
+- Re-encodes output for compatibility across players
+- Adds configurable silence gaps with extra pauses around titles
 - Requires ffmpeg to be installed in the environment
 
 **Note**: ffmpeg is required for all audio concatenation operations. The service will fail gracefully with a clear error message if ffmpeg is not available.
@@ -42,6 +42,7 @@ The service uses ffmpeg for professional audio concatenation:
 - `GET /api/urls` - Get all URLs
 - `POST /api/urls` - Add new URL
 - `DELETE /api/urls/:index` - Delete URL
+- `DELETE /api/urls/:index/audio` - Delete generated audio for URL
 - `POST /api/process-all` - Process all URLs
 - `GET /api/processed/:hash` - Get processed content
 - `GET /api/status/:hash` - Get processing status for URL
@@ -67,7 +68,9 @@ The service uses ffmpeg for professional audio concatenation:
 - `KOKORO_API_KEY` - API key for Kokoro TTS
 - `PORT` - Service port (default: 3000)
 - `DATA_DIR` - Data storage directory (default: /kokoro/data)
-- `AUDIO_SILENCE_DURATION` - Silence duration between chunks in seconds (default: 0.2)
+- `AUDIO_SILENCE_DURATION` - Silence duration between paragraph chunks in seconds (default: 0.2)
+- `AUDIO_TITLE_SILENCE_BEFORE` - Extra silence before title/heading chunks in seconds (default: 0.5)
+- `AUDIO_TITLE_SILENCE_AFTER` - Extra silence after title/heading chunks in seconds (default: 0.5)
 
 ## Data Storage
 
@@ -115,6 +118,8 @@ The `concatenateAudioWithSilence` function supports the following options:
 
 ```javascript
 await concatenateAudioWithSilence(chunkFiles, outputPath, {
-  silenceDuration: 0.2  // seconds of silence between chunks
+  paragraphSilence: 0.2,      // seconds between paragraphs
+  titleSilenceBefore: 0.5,    // silence before titles
+  titleSilenceAfter: 0.5      // silence after titles
 });
 ```
