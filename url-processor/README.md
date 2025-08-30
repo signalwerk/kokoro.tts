@@ -29,6 +29,7 @@ A Node.js service that processes URLs and converts their content to speech using
 The service uses ffmpeg for professional audio concatenation:
 
 ### ffmpeg Concatenation
+
 - Uses ffmpeg's concat demuxer to join chunks
 - Re-encodes output for compatibility across players
 - Adds configurable silence gaps with extra pauses around titles
@@ -52,6 +53,7 @@ The service uses ffmpeg for professional audio concatenation:
 ## Usage
 
 1. Start the service with Docker Compose:
+
    ```bash
    docker-compose up -d
    ```
@@ -75,6 +77,7 @@ The service uses ffmpeg for professional audio concatenation:
 ## Data Storage
 
 All processed data is stored in `/kokoro/data/` with the following structure:
+
 ```
 /kokoro/data/
 ├── urls.json (list of all URLs)
@@ -92,16 +95,19 @@ All processed data is stored in `/kokoro/data/` with the following structure:
 ## Development
 
 ### Running Tests
+
 ```bash
 npm test
 ```
 
 ### Running in Development Mode
+
 ```bash
 npm run dev
 ```
 
 ### Dependencies
+
 - Node.js 18+
 - ffmpeg (for audio processing)
 - Express.js
@@ -118,8 +124,8 @@ The `concatenateAudioWithSilence` function supports the following options:
 
 ```javascript
 await concatenateAudioWithSilence(chunkFiles, outputPath, {
-  paragraphSilence: 0.2,      // seconds between paragraphs
-  titleSilenceBefore: 0.5,    // silence before titles
-  titleSilenceAfter: 0.5      // silence after titles
+  paragraphSilence: 0.2, // seconds between paragraphs
+  titleSilenceBefore: 0.5, // silence before titles
+  titleSilenceAfter: 0.5, // silence after titles
 });
 ```

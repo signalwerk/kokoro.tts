@@ -1,7 +1,7 @@
-import { promises as fs } from 'fs';
-import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { promises as fs } from "fs";
+import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
@@ -17,23 +17,25 @@ async function concatenateAudioWithSilence(
   const {
     paragraphSilence = 0.2,
     titleSilenceBefore = 0.5,
-    titleSilenceAfter = 0.5
+    titleSilenceAfter = 0.5,
   } = options;
   if (chunkFiles.length === 0) {
-    throw new Error('No audio chunks to concatenate');
+    throw new Error("No audio chunks to concatenate");
   }
-  
+
   if (chunkFiles.length === 1) {
     await fs.copyFile(chunkFiles[0], outputPath);
     return;
   }
-  
+
   try {
-    await execAsync('ffmpeg -version');
+    await execAsync("ffmpeg -version");
   } catch (error) {
-    throw new Error('ffmpeg is required for audio concatenation but is not available. Please install ffmpeg.');
+    throw new Error(
+      "ffmpeg is required for audio concatenation but is not available. Please install ffmpeg.",
+    );
   }
-  
+
   try {
     const tempDir = path.dirname(path.resolve(outputPath));
     const timestamp = Date.now();
@@ -43,8 +45,13 @@ async function concatenateAudioWithSilence(
     async function getSilenceFile(duration) {
       const key = duration.toFixed(3);
       if (!silenceFiles.has(key)) {
-        const silencePath = path.join(tempDir, `silence-${key}-${timestamp}.mp3`);
-        await execAsync(`ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${duration} -y "${silencePath}"`);
+        const silencePath = path.join(
+          tempDir,
+          `silence-${key}-${timestamp}.mp3`,
+        );
+        await execAsync(
+          `ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${duration} -y "${silencePath}"`,
+        );
         silenceFiles.set(key, silencePath);
       }
       return silenceFiles.get(key);
@@ -66,8 +73,9 @@ async function concatenateAudioWithSilence(
           const currentType = chunkMetadata[i]?.type;
           const nextType = chunkMetadata[i + 1]?.type;
 
-          if (currentType === 'h') duration = titleSilenceAfter;
-          if (nextType === 'h') duration = Math.max(duration, titleSilenceBefore);
+          if (currentType === "h") duration = titleSilenceAfter;
+          if (nextType === "h")
+            duration = Math.max(duration, titleSilenceBefore);
 
           const silencePath = await getSilenceFile(duration);
           fileListContent.push(`file '${silencePath}'`);
@@ -76,13 +84,13 @@ async function concatenateAudioWithSilence(
         console.warn(`Skipping missing chunk file: ${absolutePath}`);
       }
     }
-    
+
     if (fileListContent.length === 0) {
-      throw new Error('No valid chunk files found');
+      throw new Error("No valid chunk files found");
     }
-    
-    await fs.writeFile(fileListPath, fileListContent.join('\n'));
-    
+
+    await fs.writeFile(fileListPath, fileListContent.join("\n"));
+
     // Concatenate using ffmpeg and re-encode for compatibility
     const absoluteOutputPath = path.resolve(outputPath);
     const ffmpegCommand = `ffmpeg -f concat -safe 0 -i "${fileListPath}" -acodec libmp3lame -ar 22050 -ac 1 -y "${absoluteOutputPath}"`;
@@ -95,72 +103,85 @@ async function concatenateAudioWithSilence(
         await fs.unlink(silencePath);
       }
     } catch (cleanupError) {
-      console.warn('Failed to clean up temporary files:', cleanupError);
+      console.warn("Failed to clean up temporary files:", cleanupError);
     }
 
-    console.log(`Successfully concatenated ${chunkFiles.length} audio files with custom silence gaps`);
+    console.log(
+      `Successfully concatenated ${chunkFiles.length} audio files with custom silence gaps`,
+    );
   } catch (error) {
-    console.error('ffmpeg concatenation failed:', error);
+    console.error("ffmpeg concatenation failed:", error);
     throw new Error(`Audio concatenation failed: ${error.message}`);
   }
 }
 
-describe('Audio Concatenation', () => {
-  const testDir = './test-audio';
-  
+describe("Audio Concatenation", () => {
+  const testDir = "./test-audio";
+
   beforeAll(async () => {
     // Create test directory
     await fs.mkdir(testDir, { recursive: true });
   });
-  
+
   afterAll(async () => {
     // Clean up test directory
     try {
       await fs.rm(testDir, { recursive: true, force: true });
     } catch (error) {
-      console.warn('Failed to clean up test directory:', error);
+      console.warn("Failed to clean up test directory:", error);
     }
   });
-  
-  test('should handle empty chunk files array', async () => {
-    await expect(concatenateAudioWithSilence([], 'output.mp3')).rejects.toThrow('No audio chunks to concatenate');
+
+  test("should handle empty chunk files array", async () => {
+    await expect(concatenateAudioWithSilence([], "output.mp3")).rejects.toThrow(
+      "No audio chunks to concatenate",
+    );
   });
-  
-  test('should copy single file when only one chunk', async () => {
-    const inputFile = path.join(testDir, 'single.mp3');
-    const outputFile = path.join(testDir, 'output-single.mp3');
-    
+
+  test("should copy single file when only one chunk", async () => {
+    const inputFile = path.join(testDir, "single.mp3");
+    const outputFile = path.join(testDir, "output-single.mp3");
+
     // Create a dummy MP3 file (minimal valid MP3 header)
     const mp3Header = Buffer.from([
-      0xFF, 0xFB, 0x90, 0x00, // MP3 frame header
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+      0xff,
+      0xfb,
+      0x90,
+      0x00, // MP3 frame header
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
     ]);
     await fs.writeFile(inputFile, mp3Header);
-    
+
     await concatenateAudioWithSilence([inputFile], outputFile);
-    
+
     // Check that output file exists and has same content
     const inputContent = await fs.readFile(inputFile);
     const outputContent = await fs.readFile(outputFile);
     expect(outputContent).toEqual(inputContent);
   });
-  
-  test('should handle ffmpeg errors gracefully with multiple chunks', async () => {
-    const chunk1 = path.join(testDir, 'chunk1.mp3');
-    const chunk2 = path.join(testDir, 'chunk2.mp3');
-    const outputFile = path.join(testDir, 'output-multi.mp3');
-    
+
+  test("should handle ffmpeg errors gracefully with multiple chunks", async () => {
+    const chunk1 = path.join(testDir, "chunk1.mp3");
+    const chunk2 = path.join(testDir, "chunk2.mp3");
+    const outputFile = path.join(testDir, "output-multi.mp3");
+
     // Create dummy MP3 files (invalid for ffmpeg)
     const mp3Header = Buffer.from([
-      0xFF, 0xFB, 0x90, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+      0xff, 0xfb, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]);
     await fs.writeFile(chunk1, mp3Header);
     await fs.writeFile(chunk2, mp3Header);
-    
+
     // This should throw an error due to invalid MP3 files
     await expect(
-      concatenateAudioWithSilence([chunk1, chunk2], outputFile)
+      concatenateAudioWithSilence([chunk1, chunk2], outputFile),
     ).rejects.toThrow(/Audio concatenation failed|ffmpeg is required/);
   });
 });
