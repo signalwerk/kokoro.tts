@@ -904,9 +904,29 @@ app.get("/api/processed/:hash", basicAuth, async (req, res) => {
     const info = JSON.parse(
       await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
     );
-    const textData = JSON.parse(
-      await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
-    );
+
+    let htmlContent;
+    let article;
+    let textData;
+
+    try {
+      const htmlData = JSON.parse(
+        await fs.readFile(path.join(urlDir, "html.json"), "utf8"),
+      );
+      htmlContent = htmlData.content;
+    } catch {}
+
+    try {
+      article = JSON.parse(
+        await fs.readFile(path.join(urlDir, "content.json"), "utf8"),
+      );
+    } catch {}
+
+    try {
+      textData = JSON.parse(
+        await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
+      );
+    } catch {}
 
     // Check if audio file exists
     const audioExists = await fs
@@ -916,11 +936,13 @@ app.get("/api/processed/:hash", basicAuth, async (req, res) => {
 
     res.json({
       info,
-      textChunks: textData.chunks || [],
+      html: htmlContent,
+      article,
+      textChunks: textData?.chunks || [],
       // Maintain backward compatibility
-      text: textData.chunks
+      text: textData?.chunks
         ? textData.chunks.map((chunk) => chunk.text).join(" ")
-        : textData.text || "",
+        : textData?.text || "",
       audioAvailable: audioExists,
     });
   } catch (error) {

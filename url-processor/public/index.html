@@ -537,48 +537,81 @@
             }
         }
         
-        // View processed content
+        // Escape HTML for safe display
+        function escapeHtml(str) {
+            return str.replace(/[&<>"']/g, function(m) {
+                return {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                }[m];
+            });
+        }
+
+        // View processed content with step details
         async function viewContent(url) {
             const hash = await sha256(url);
-            
+
             try {
                 const response = await fetch(`/api/processed/${hash}`);
-                
+
                 if (!response.ok) {
                     showStatus('Content not yet processed or failed to process', 'error');
                     return;
                 }
-                
+
                 const data = await response.json();
-                
+
                 const modalTitle = document.getElementById('modalTitle');
                 const modalContent = document.getElementById('modalContent');
-                
+
                 modalTitle.textContent = 'Processed Content';
-                
-                let content = `
-                    <p><strong>URL:</strong> ${data.info.url}</p>
-                    <p><strong>Processed:</strong> ${new Date(data.info.processedAt).toLocaleString()}</p>
-                `;
-                
+
+                let content = '';
+
+                if (data.info) {
+                    content += `
+                        <p><strong>URL:</strong> ${data.info.url}</p>
+                        ${data.info.processedAt ? `<p><strong>Processed:</strong> ${new Date(data.info.processedAt).toLocaleString()}</p>` : ''}
+                    `;
+                }
+
+                if (data.html) {
+                    content += `
+                        <h3>Step 2: HTML</h3>
+                        <pre class="text-content">${escapeHtml(data.html)}</pre>
+                    `;
+                }
+
+                if (data.article) {
+                    content += `
+                        <h3>Step 3: Readability</h3>
+                        <div class="text-content">${escapeHtml(data.article.content || '')}</div>
+                    `;
+                }
+
+                if (data.text) {
+                    content += `
+                        <h3>Step 4: Text</h3>
+                        <div class="text-content">${escapeHtml(data.text)}</div>
+                    `;
+                }
+
                 if (data.audioAvailable) {
                     content += `
-                        <p><strong>Audio:</strong></p>
+                        <h3>Step 5: Audio</h3>
                         <audio controls class="audio-player">
                             <source src="/api/audio/${hash}" type="audio/mpeg">
                             Your browser does not support the audio element.
                         </audio>
                     `;
                 }
-                
-                content += `
-                    <p><strong>Text Content:</strong></p>
-                    <div class="text-content">${data.text}</div>
-                `;
-                
+
                 modalContent.innerHTML = content;
                 document.getElementById('contentModal').style.display = 'block';
-                
+
             } catch (error) {
                 showStatus('Error loading content: ' + error.message, 'error');
             }
@@ -694,7 +727,7 @@
                             </div>
                         </div>
                         <div class="url-actions">
-                            <button class="view-btn" onclick="viewContent('${url}')" ${status.status !== 'completed' ? 'disabled' : ''}>
+                            <button class="view-btn" onclick="viewContent('${url}')">
                                 👁️ View
                             </button>
                             <button class="delete-btn" onclick="deleteUrl(${index})">🗑️ Delete</button>
