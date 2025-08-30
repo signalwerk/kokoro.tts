@@ -98,7 +98,397 @@ function basicAuth(req, res, next) {
   next();
 }
 
-// Serve protected static files with basic auth
+// API Routes (defined before static middleware to avoid conflicts)
+
+// Health check endpoint
+app.get("/api/health", async (req, res) => {
+  try {
+    // Test Kokoro API
+    const testMp3 = await Promise.race([
+      openai.audio.speech.create({
+        model: "model_q8f16",
+        voice: "af_heart",
+        input: "Health check",
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Health check timeout")), 10000),
+      ),
+    ]);
+
+    res.json({
+      status: "healthy",
+      kokoroApi: "connected",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: "unhealthy",
+      kokoroApi: "disconnected",
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Get all URLs
+app.get("/api/urls", basicAuth, async (req, res) => {
+  const urls = await loadUrls();
+  res.json(urls);
+});
+
+// Add new URL
+app.post("/api/urls", basicAuth, async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: "URL is required" });
+  }
+
+  // Trim URL
+  const trimmedUrl = url.trim();
+
+  if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+    return res.status(400).json({ error: "Invalid URL format" });
+  }
+
+  const urls = await loadUrls();
+
+  // Check if URL already exists (handle both string and object formats)
+  const urlExists = urls.some((item) => {
+    const existingUrl = typeof item === "string" ? item : item.url;
+    return existingUrl === trimmedUrl;
+  });
+
+  if (urlExists) {
+    return res.status(400).json({ error: "URL already exists" });
+  }
+
+  // Add URL with timestamp
+  const urlEntry = {
+    url: trimmedUrl,
+    addedAt: new Date().toISOString(),
+  };
+
+  urls.push(urlEntry);
+  await saveUrls(urls);
+
+  // Process URL in background
+  processUrl(trimmedUrl).then((result) => {
+    console.log("Processing result:", result);
+  });
+
+  res.json({ success: true, url: trimmedUrl, addedAt: urlEntry.addedAt });
+});
+
+// Delete URL
+app.delete("/api/urls/:index", basicAuth, async (req, res) => {
+  const index = parseInt(req.params.index);
+  const urls = await loadUrls();
+
+  if (index < 0 || index >= urls.length) {
+    return res.status(404).json({ error: "URL not found" });
+  }
+
+  const removedUrlEntry = urls.splice(index, 1)[0];
+  const removedUrl =
+    typeof removedUrlEntry === "string" ? removedUrlEntry : removedUrlEntry.url;
+  await saveUrls(urls);
+
+  // Optionally remove processed data
+  const hash = generateHash(removedUrl);
+  const urlDir = path.join(DATA_DIR, hash);
+  try {
+    await fs.rm(urlDir, { recursive: true, force: true });
+  } catch (error) {
+    console.error("Error removing processed data:", error);
+  }
+
+  res.json({ success: true, removedUrl });
+});
+
+// Delete generated audio but keep URL
+app.delete("/api/urls/:index/audio", basicAuth, async (req, res) => {
+  const index = parseInt(req.params.index);
+  const urls = await loadUrls();
+
+  if (index < 0 || index >= urls.length) {
+    return res.status(404).json({ error: "URL not found" });
+  }
+
+  const urlEntry = urls[index];
+  const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+  const hash = generateHash(url);
+  const audioPath = path.join(DATA_DIR, hash, "text.mp3");
+
+  try {
+    await fs.rm(audioPath, { force: true });
+    delete audioProgress[hash];
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting audio:", error);
+    res.status(500).json({ error: "Failed to delete audio" });
+  }
+});
+
+// Process all URLs
+app.post("/api/process-all", basicAuth, async (req, res) => {
+  const urls = await loadUrls();
+
+  if (urls.length === 0) {
+    return res.json({ message: "No URLs to process" });
+  }
+
+  // Process URLs sequentially to avoid overwhelming the system
+  const results = [];
+  for (const urlEntry of urls) {
+    const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+    const result = await processUrl(url);
+    results.push({ url, ...result });
+  }
+
+  res.json({ results });
+});
+
+// Get processed data for a URL
+app.get("/api/processed/:hash", basicAuth, async (req, res) => {
+  const { hash } = req.params;
+  const urlDir = path.join(DATA_DIR, hash);
+
+  try {
+    const info = JSON.parse(
+      await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
+    );
+
+    let htmlContent;
+    let article;
+    let textData;
+
+    try {
+      const htmlData = JSON.parse(
+        await fs.readFile(path.join(urlDir, "html.json"), "utf8"),
+      );
+      htmlContent = htmlData.content;
+    } catch {}
+
+    try {
+      article = JSON.parse(
+        await fs.readFile(path.join(urlDir, "content.json"), "utf8"),
+      );
+    } catch {}
+
+    try {
+      textData = JSON.parse(
+        await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
+      );
+    } catch {}
+
+    // Check if audio file exists
+    const audioExists = await fs
+      .access(path.join(urlDir, "text.mp3"))
+      .then(() => true)
+      .catch(() => false);
+
+    res.json({
+      info,
+      html: htmlContent,
+      article,
+      textChunks: textData?.chunks || [],
+      // Maintain backward compatibility
+      textHTML: textData?.chunks
+        ? chunksToHtml(textData.chunks)
+        : textData?.text || "",
+      audioAvailable: audioExists,
+    });
+  } catch (error) {
+    res.status(404).json({ error: "Processed data not found" });
+  }
+});
+
+// Get processing status for a URL
+app.get("/api/status/:hash", basicAuth, async (req, res) => {
+  const { hash } = req.params;
+  const status = await getUrlStatus(hash);
+  res.json(status);
+});
+
+// Get detailed progress for audio generation
+app.get("/api/progress/:hash", basicAuth, async (req, res) => {
+  const { hash } = req.params;
+
+  if (audioProgress[hash]) {
+    const progress = audioProgress[hash];
+    const elapsed = Date.now() - progress.startTime;
+    const avgTimePerChunk =
+      progress.currentChunk > 0 ? elapsed / progress.currentChunk : 0;
+    const estimatedTotal = avgTimePerChunk * progress.totalChunks;
+    const estimatedRemaining = Math.max(0, estimatedTotal - elapsed);
+
+    res.json({
+      ...progress,
+      elapsedMs: elapsed,
+      estimatedRemainingMs: estimatedRemaining,
+      avgTimePerChunkMs: avgTimePerChunk,
+    });
+  } else {
+    res.json({ status: "not_generating" });
+  }
+});
+
+// Get status for all URLs
+app.get("/api/status-all", basicAuth, async (req, res) => {
+  try {
+    const urls = await loadUrls();
+    const statuses = {};
+
+    for (const urlEntry of urls) {
+      const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+      const hash = generateHash(url);
+      statuses[url] = await getUrlStatus(hash);
+    }
+
+    res.json(statuses);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to get status" });
+  }
+});
+
+// Serve audio file (NO AUTH REQUIRED)
+app.get("/api/audio/:hash", async (req, res) => {
+  const { hash } = req.params;
+  const audioPath = path.join(DATA_DIR, hash, "text.mp3");
+  const absoluteAudioPath = path.resolve(audioPath);
+
+  try {
+    await fs.access(absoluteAudioPath);
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.sendFile(absoluteAudioPath);
+  } catch (error) {
+    console.error(`Audio file not found: ${absoluteAudioPath}`, error);
+    res.status(404).json({ error: "Audio file not found" });
+  }
+});
+
+// Generate RSS feed (NO AUTH REQUIRED)
+app.get("/rss", async (req, res) => {
+  try {
+    const urls = await loadUrls();
+    const completedUrls = [];
+
+    for (const urlEntry of urls) {
+      const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+      const hash = generateHash(url);
+      const status = await getUrlStatus(hash);
+
+      if (status.status === "completed") {
+        const urlDir = path.join(DATA_DIR, hash);
+        try {
+          const info = JSON.parse(
+            await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
+          );
+          const textData = JSON.parse(
+            await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
+          );
+
+          // Try to get the title from the first chunk if it's a heading
+          let title = url;
+          if (
+            textData.chunks &&
+            textData.chunks.length > 0 &&
+            textData.chunks[0].type === "h"
+          ) {
+            title = textData.chunks[0].text;
+          }
+
+          completedUrls.push({
+            url,
+            hash,
+            title,
+            processedAt: info.processedAt,
+            addedAt: typeof urlEntry === "object" ? urlEntry.addedAt : null,
+            description: textData.chunks
+              ? textData.chunks
+                  .slice(0, 3)
+                  .map((chunk) => chunk.text)
+                  .join(" ")
+                  .substring(0, 200) + "..."
+              : "",
+          });
+        } catch (error) {
+          console.error("Error reading info for", url, error);
+        }
+      }
+    }
+
+    // Sort by processedAt date (newest first)
+    completedUrls.sort(
+      (a, b) => new Date(b.processedAt) - new Date(a.processedAt),
+    );
+
+    // Get the base URL for audio links
+    const baseUrl = req.protocol + "://" + req.get("host");
+    const coverImageUrl =
+      "https://avatar.signalwerk.ch/latest/w2000/signalwerk.png";
+
+    // Generate RSS XML
+    const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Kokoro TTS - Web Content Audio</title>
+    <description>Text-to-speech audio content generated from web articles using Kokoro TTS</description>
+    <link>${baseUrl}</link>
+    <language>en-us</language>
+    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+    <pubDate>${new Date().toUTCString()}</pubDate>
+    <itunes:image href="${coverImageUrl}"/>
+    <itunes:category text="Technology"/>
+    <itunes:subtitle>AI-generated audio from web content</itunes:subtitle>
+    <itunes:summary>Automated text-to-speech conversion of web articles using Kokoro TTS technology</itunes:summary>
+    <itunes:author>Kokoro TTS</itunes:author>
+    <itunes:owner>
+      <itunes:name>Kokoro TTS</itunes:name>
+    </itunes:owner>
+    <image>
+      <url>${coverImageUrl}</url>
+      <title>Kokoro TTS - Web Content Audio</title>
+      <link>${baseUrl}</link>
+    </image>
+${completedUrls
+  .map(
+    (item) => `    <item>
+      <title>${escapeXml(item.title)}</title>
+      <description>${escapeXml(item.description)}</description>
+      <link>${escapeXml(item.url)}</link>
+      <guid isPermaLink="false">${item.hash}</guid>
+      <pubDate>${new Date(item.processedAt).toUTCString()}</pubDate>
+      <enclosure url="${baseUrl}/api/audio/${item.hash}" type="audio/mpeg"/>
+      <itunes:image href="${coverImageUrl}"/>
+      <itunes:duration>00:00:00</itunes:duration>
+      <itunes:summary>${escapeXml(item.description)}</itunes:summary>
+    </item>`,
+  )
+  .join("\n")}
+  </channel>
+</rss>`;
+
+    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+    res.send(rssXml);
+  } catch (error) {
+    console.error("Error generating RSS feed:", error);
+    res.status(500).send("Error generating RSS feed");
+  }
+});
+
+// Helper function to escape XML content
+function escapeXml(unsafe) {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// Serve protected static files with basic auth (AFTER API routes)
 app.use("/", basicAuth, express.static("public"));
 
 // Ensure data directory exists
@@ -807,396 +1197,6 @@ async function processUrl(url) {
     return { success: false, message: error.message, hash };
   }
 }
-
-// API Routes
-
-// Health check endpoint
-app.get("/api/health", async (req, res) => {
-  try {
-    // Test Kokoro API
-    const testMp3 = await Promise.race([
-      openai.audio.speech.create({
-        model: "model_q8f16",
-        voice: "af_heart",
-        input: "Health check",
-      }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Health check timeout")), 10000),
-      ),
-    ]);
-
-    res.json({
-      status: "healthy",
-      kokoroApi: "connected",
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    res.status(503).json({
-      status: "unhealthy",
-      kokoroApi: "disconnected",
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-// Get all URLs
-app.get("/api/urls", basicAuth, async (req, res) => {
-  const urls = await loadUrls();
-  res.json(urls);
-});
-
-// Add new URL
-app.post("/api/urls", basicAuth, async (req, res) => {
-  const { url } = req.body;
-
-  if (!url) {
-    return res.status(400).json({ error: "URL is required" });
-  }
-
-  // Trim URL
-  const trimmedUrl = url.trim();
-
-  if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
-    return res.status(400).json({ error: "Invalid URL format" });
-  }
-
-  const urls = await loadUrls();
-
-  // Check if URL already exists (handle both string and object formats)
-  const urlExists = urls.some((item) => {
-    const existingUrl = typeof item === "string" ? item : item.url;
-    return existingUrl === trimmedUrl;
-  });
-
-  if (urlExists) {
-    return res.status(400).json({ error: "URL already exists" });
-  }
-
-  // Add URL with timestamp
-  const urlEntry = {
-    url: trimmedUrl,
-    addedAt: new Date().toISOString(),
-  };
-
-  urls.push(urlEntry);
-  await saveUrls(urls);
-
-  // Process URL in background
-  processUrl(trimmedUrl).then((result) => {
-    console.log("Processing result:", result);
-  });
-
-  res.json({ success: true, url: trimmedUrl, addedAt: urlEntry.addedAt });
-});
-
-// Delete URL
-app.delete("/api/urls/:index", basicAuth, async (req, res) => {
-  const index = parseInt(req.params.index);
-  const urls = await loadUrls();
-
-  if (index < 0 || index >= urls.length) {
-    return res.status(404).json({ error: "URL not found" });
-  }
-
-  const removedUrlEntry = urls.splice(index, 1)[0];
-  const removedUrl =
-    typeof removedUrlEntry === "string" ? removedUrlEntry : removedUrlEntry.url;
-  await saveUrls(urls);
-
-  // Optionally remove processed data
-  const hash = generateHash(removedUrl);
-  const urlDir = path.join(DATA_DIR, hash);
-  try {
-    await fs.rm(urlDir, { recursive: true, force: true });
-  } catch (error) {
-    console.error("Error removing processed data:", error);
-  }
-
-  res.json({ success: true, removedUrl });
-});
-
-// Delete generated audio but keep URL
-app.delete("/api/urls/:index/audio", basicAuth, async (req, res) => {
-  const index = parseInt(req.params.index);
-  const urls = await loadUrls();
-
-  if (index < 0 || index >= urls.length) {
-    return res.status(404).json({ error: "URL not found" });
-  }
-
-  const urlEntry = urls[index];
-  const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
-  const hash = generateHash(url);
-  const audioPath = path.join(DATA_DIR, hash, "text.mp3");
-
-  try {
-    await fs.rm(audioPath, { force: true });
-    delete audioProgress[hash];
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting audio:", error);
-    res.status(500).json({ error: "Failed to delete audio" });
-  }
-});
-
-// Process all URLs
-app.post("/api/process-all", basicAuth, async (req, res) => {
-  const urls = await loadUrls();
-
-  if (urls.length === 0) {
-    return res.json({ message: "No URLs to process" });
-  }
-
-  // Process URLs sequentially to avoid overwhelming the system
-  const results = [];
-  for (const urlEntry of urls) {
-    const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
-    const result = await processUrl(url);
-    results.push({ url, ...result });
-  }
-
-  res.json({ results });
-});
-
-// Get processed data for a URL
-app.get("/api/processed/:hash", basicAuth, async (req, res) => {
-  const { hash } = req.params;
-  const urlDir = path.join(DATA_DIR, hash);
-
-  try {
-    const info = JSON.parse(
-      await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
-    );
-
-    let htmlContent;
-    let article;
-    let textData;
-
-    try {
-      const htmlData = JSON.parse(
-        await fs.readFile(path.join(urlDir, "html.json"), "utf8"),
-      );
-      htmlContent = htmlData.content;
-    } catch {}
-
-    try {
-      article = JSON.parse(
-        await fs.readFile(path.join(urlDir, "content.json"), "utf8"),
-      );
-    } catch {}
-
-    try {
-      textData = JSON.parse(
-        await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
-      );
-    } catch {}
-
-    // Check if audio file exists
-    const audioExists = await fs
-      .access(path.join(urlDir, "text.mp3"))
-      .then(() => true)
-      .catch(() => false);
-
-    res.json({
-      info,
-      html: htmlContent,
-      article,
-      textChunks: textData?.chunks || [],
-      // Maintain backward compatibility
-      textHTML: textData?.chunks
-        ? chunksToHtml(textData.chunks)
-        : textData?.text || "",
-      audioAvailable: audioExists,
-    });
-  } catch (error) {
-    res.status(404).json({ error: "Processed data not found" });
-  }
-});
-
-// Get processing status for a URL
-app.get("/api/status/:hash", basicAuth, async (req, res) => {
-  const { hash } = req.params;
-  const status = await getUrlStatus(hash);
-  res.json(status);
-});
-
-// Get detailed progress for audio generation
-app.get("/api/progress/:hash", basicAuth, async (req, res) => {
-  const { hash } = req.params;
-
-  if (audioProgress[hash]) {
-    const progress = audioProgress[hash];
-    const elapsed = Date.now() - progress.startTime;
-    const avgTimePerChunk =
-      progress.currentChunk > 0 ? elapsed / progress.currentChunk : 0;
-    const estimatedTotal = avgTimePerChunk * progress.totalChunks;
-    const estimatedRemaining = Math.max(0, estimatedTotal - elapsed);
-
-    res.json({
-      ...progress,
-      elapsedMs: elapsed,
-      estimatedRemainingMs: estimatedRemaining,
-      avgTimePerChunkMs: avgTimePerChunk,
-    });
-  } else {
-    res.json({ status: "not_generating" });
-  }
-});
-
-// Get status for all URLs
-app.get("/api/status-all", basicAuth, async (req, res) => {
-  try {
-    const urls = await loadUrls();
-    const statuses = {};
-
-    for (const urlEntry of urls) {
-      const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
-      const hash = generateHash(url);
-      statuses[url] = await getUrlStatus(hash);
-    }
-
-    res.json(statuses);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get status" });
-  }
-});
-
-// Serve audio file
-app.get("/api/audio/:hash", basicAuth, async (req, res) => {
-  const { hash } = req.params;
-  const audioPath = path.join(DATA_DIR, hash, "text.mp3");
-  const absoluteAudioPath = path.resolve(audioPath);
-
-  try {
-    await fs.access(absoluteAudioPath);
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.sendFile(absoluteAudioPath);
-  } catch (error) {
-    console.error(`Audio file not found: ${absoluteAudioPath}`, error);
-    res.status(404).json({ error: "Audio file not found" });
-  }
-});
-
-// Helper function to escape XML content
-function escapeXml(unsafe) {
-  return unsafe
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-// Generate RSS feed
-app.get("/rss", async (req, res) => {
-  try {
-    const urls = await loadUrls();
-    const completedUrls = [];
-
-    for (const urlEntry of urls) {
-      const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
-      const hash = generateHash(url);
-      const status = await getUrlStatus(hash);
-
-      if (status.status === "completed") {
-        const urlDir = path.join(DATA_DIR, hash);
-        try {
-          const info = JSON.parse(
-            await fs.readFile(path.join(urlDir, "info.json"), "utf8"),
-          );
-          const textData = JSON.parse(
-            await fs.readFile(path.join(urlDir, "text.json"), "utf8"),
-          );
-
-          // Try to get the title from the first chunk if it's a heading
-          let title = url;
-          if (
-            textData.chunks &&
-            textData.chunks.length > 0 &&
-            textData.chunks[0].type === "h"
-          ) {
-            title = textData.chunks[0].text;
-          }
-
-          completedUrls.push({
-            url,
-            hash,
-            title,
-            processedAt: info.processedAt,
-            addedAt: typeof urlEntry === "object" ? urlEntry.addedAt : null,
-            description: textData.chunks
-              ? textData.chunks
-                  .slice(0, 3)
-                  .map((chunk) => chunk.text)
-                  .join(" ")
-                  .substring(0, 200) + "..."
-              : "",
-          });
-        } catch (error) {
-          console.error("Error reading info for", url, error);
-        }
-      }
-    }
-
-    // Sort by processedAt date (newest first)
-    completedUrls.sort(
-      (a, b) => new Date(b.processedAt) - new Date(a.processedAt),
-    );
-
-    // Get the base URL for audio links
-    const baseUrl = req.protocol + "://" + req.get("host");
-    const coverImageUrl =
-      "https://avatar.signalwerk.ch/latest/w2000/signalwerk.png";
-
-    // Generate RSS XML
-    const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
-  <channel>
-    <title>Kokoro TTS - Web Content Audio</title>
-    <description>Text-to-speech audio content generated from web articles using Kokoro TTS</description>
-    <link>${baseUrl}</link>
-    <language>en-us</language>
-    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
-    <pubDate>${new Date().toUTCString()}</pubDate>
-    <itunes:image href="${coverImageUrl}"/>
-    <itunes:category text="Technology"/>
-    <itunes:subtitle>AI-generated audio from web content</itunes:subtitle>
-    <itunes:summary>Automated text-to-speech conversion of web articles using Kokoro TTS technology</itunes:summary>
-    <itunes:author>Kokoro TTS</itunes:author>
-    <itunes:owner>
-      <itunes:name>Kokoro TTS</itunes:name>
-    </itunes:owner>
-    <image>
-      <url>${coverImageUrl}</url>
-      <title>Kokoro TTS - Web Content Audio</title>
-      <link>${baseUrl}</link>
-    </image>
-${completedUrls
-  .map(
-    (item) => `    <item>
-      <title>${escapeXml(item.title)}</title>
-      <description>${escapeXml(item.description)}</description>
-      <link>${escapeXml(item.url)}</link>
-      <guid isPermaLink="false">${item.hash}</guid>
-      <pubDate>${new Date(item.processedAt).toUTCString()}</pubDate>
-      <enclosure url="${baseUrl}/api/audio/${item.hash}" type="audio/mpeg"/>
-      <itunes:image href="${coverImageUrl}"/>
-      <itunes:duration>00:00:00</itunes:duration>
-      <itunes:summary>${escapeXml(item.description)}</itunes:summary>
-    </item>`,
-  )
-  .join("\n")}
-  </channel>
-</rss>`;
-
-    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
-    res.send(rssXml);
-  } catch (error) {
-    console.error("Error generating RSS feed:", error);
-    res.status(500).send("Error generating RSS feed");
-  }
-});
 
 // Initialize and start server
 await ensureDataDir();
