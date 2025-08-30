@@ -215,9 +215,19 @@
             padding: 8px 15px;
             font-size: 14px;
         }
-        
+
         .delete-btn:hover {
             background: #c82333;
+        }
+
+        .delete-audio-btn {
+            background: #ffc107;
+            padding: 8px 15px;
+            font-size: 14px;
+        }
+
+        .delete-audio-btn:hover {
+            background: #e0a800;
         }
         
         .view-btn {
@@ -548,7 +558,34 @@
                 showStatus('Error deleting URL: ' + error.message, 'error');
             }
         }
-        
+
+        // Delete generated audio but keep URL
+        async function deleteAudio(index) {
+            const urlEntry = urls[index];
+            const url = typeof urlEntry === 'string' ? urlEntry : urlEntry.url;
+
+            if (!confirm(`Delete generated audio for this URL?\n\n${url}\n\nYou can reprocess it later.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/urls/${index}/audio`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showStatus('Audio deleted successfully', 'success');
+                    await updateAllStatuses();
+                } else {
+                    showStatus('Error deleting audio: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error deleting audio: ' + error.message, 'error');
+            }
+        }
+
         // Process all URLs
         async function processAll() {
             if (urls.length === 0) {
@@ -822,7 +859,8 @@
                             <button class="view-btn" onclick="viewContent('${url}')">
                                 👁️ View
                             </button>
-                            <button class="delete-btn" onclick="deleteUrl(${index})">🗑️ Delete</button>
+                            <button class="delete-audio-btn" onclick="deleteAudio(${index})" ${status.status !== 'completed' ? 'disabled' : ''}>🗑️ Audio</button>
+                            <button class="delete-btn" onclick="deleteUrl(${index})">🗑️ URL</button>
                         </div>
                     </div>
                 `;

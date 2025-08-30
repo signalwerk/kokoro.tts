@@ -28,8 +28,16 @@ const KOKORO_API_URL =
 const cleanKokoroUrl = KOKORO_API_URL.replace(/\/$/, "");
 
 // Audio processing configuration
+// paragraphSilence: default gap between paragraphs
+// titleSilenceBefore/After: additional silence when transitioning
+//   to and from title (heading) chunks
 const AUDIO_CONFIG = {
-  silenceDuration: parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2,
+  paragraphSilence:
+    parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2,
+  titleSilenceBefore:
+    parseFloat(process.env.AUDIO_TITLE_SILENCE_BEFORE) || 0.5,
+  titleSilenceAfter:
+    parseFloat(process.env.AUDIO_TITLE_SILENCE_AFTER) || 0.5,
 };
 
 // Initialize OpenAI client for Kokoro TTS
@@ -452,6 +460,7 @@ async function generateTtsAudio(url, urlDir, textChunks) {
     };
 
     const chunkFiles = [];
+    const chunkMeta = [];
     let successfulChunks = 0;
     let failedChunks = 0;
 
@@ -530,6 +539,7 @@ async function generateTtsAudio(url, urlDir, textChunks) {
       }
 
       chunkFiles.push(chunkPath);
+      chunkMeta.push(chunk);
     }
 
     console.log(
@@ -557,10 +567,13 @@ async function generateTtsAudio(url, urlDir, textChunks) {
 
     // Validate that all chunk files exist before concatenation
     const validChunkFiles = [];
-    for (const chunkFile of chunkFiles) {
+    const validChunkMeta = [];
+    for (let i = 0; i < chunkFiles.length; i++) {
+      const chunkFile = chunkFiles[i];
       try {
         await fs.access(chunkFile);
         validChunkFiles.push(chunkFile);
+        validChunkMeta.push(chunkMeta[i]);
       } catch (error) {
         console.warn(`Chunk file not found, skipping: ${chunkFile}`);
       }
@@ -577,7 +590,12 @@ async function generateTtsAudio(url, urlDir, textChunks) {
     );
 
     // Create concatenated audio with configurable silence gaps
-    await concatenateAudioWithSilence(validChunkFiles, audioPath, AUDIO_CONFIG);
+    await concatenateAudioWithSilence(
+      validChunkFiles,
+      audioPath,
+      AUDIO_CONFIG,
+      validChunkMeta,
+    );
 
     // Complete and clean up progress tracking
     delete audioProgress[hash];
@@ -597,9 +615,12 @@ async function concatenateAudioWithSilence(
   chunkFiles,
   outputPath,
   options = {},
+  chunkMetadata = [],
 ) {
   const {
-    silenceDuration = 0.2, // seconds
+    paragraphSilence = 0.2,
+    titleSilenceBefore = 0.5,
+    titleSilenceAfter = 0.5,
   } = options;
 
   if (chunkFiles.length === 0) {
@@ -626,13 +647,20 @@ async function concatenateAudioWithSilence(
     const tempDir = path.dirname(path.resolve(outputPath));
     const timestamp = Date.now();
     const fileListPath = path.join(tempDir, `filelist-${timestamp}.txt`);
-    const silencePath = path.join(tempDir, `silence-${timestamp}.mp3`);
 
-    // Generate silence with same characteristics as the audio files
-    // We'll create a simple silence MP3 that ffmpeg can handle
-    await execAsync(
-      `ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${silenceDuration} -y "${silencePath}"`,
-    );
+    // Cache for silence files keyed by duration
+    const silenceFiles = new Map();
+    async function getSilenceFile(duration) {
+      const key = duration.toFixed(3);
+      if (!silenceFiles.has(key)) {
+        const silencePath = path.join(tempDir, `silence-${key}-${timestamp}.mp3`);
+        await execAsync(
+          `ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${duration} -y "${silencePath}"`,
+        );
+        silenceFiles.set(key, silencePath);
+      }
+      return silenceFiles.get(key);
+    }
 
     // Create file list for ffmpeg concat - use absolute paths
     const fileListContent = [];
@@ -646,6 +674,14 @@ async function concatenateAudioWithSilence(
 
         // Add silence between chunks (except after the last one)
         if (i < chunkFiles.length - 1) {
+          let duration = paragraphSilence;
+          const currentType = chunkMetadata[i]?.type;
+          const nextType = chunkMetadata[i + 1]?.type;
+
+          if (currentType === "h") duration = titleSilenceAfter;
+          if (nextType === "h") duration = Math.max(duration, titleSilenceBefore);
+
+          const silencePath = await getSilenceFile(duration);
           fileListContent.push(`file '${silencePath}'`);
         }
       } catch (error) {
@@ -659,21 +695,24 @@ async function concatenateAudioWithSilence(
 
     await fs.writeFile(fileListPath, fileListContent.join("\n"));
 
-    // Concatenate using ffmpeg with copy codec to preserve original encoding
+    // Concatenate using ffmpeg and re-encode for broader compatibility
     const absoluteOutputPath = path.resolve(outputPath);
-    const ffmpegCommand = `ffmpeg -f concat -safe 0 -i "${fileListPath}" -c copy -y "${absoluteOutputPath}"`;
+    const ffmpegCommand =
+      `ffmpeg -f concat -safe 0 -i "${fileListPath}" -acodec libmp3lame -ar 22050 -ac 1 -y "${absoluteOutputPath}"`;
     await execAsync(ffmpegCommand);
 
     // Clean up temporary files
     try {
       await fs.unlink(fileListPath);
-      await fs.unlink(silencePath);
+      for (const silencePath of silenceFiles.values()) {
+        await fs.unlink(silencePath);
+      }
     } catch (cleanupError) {
       console.warn("Failed to clean up temporary files:", cleanupError);
     }
 
     console.log(
-      `Successfully concatenated ${chunkFiles.length} audio files with ${silenceDuration}s silence gaps`,
+      `Successfully concatenated ${chunkFiles.length} audio files with custom silence gaps`,
     );
   } catch (error) {
     console.error("ffmpeg concatenation failed:", error);
@@ -874,6 +913,30 @@ app.delete("/api/urls/:index", basicAuth, async (req, res) => {
   }
 
   res.json({ success: true, removedUrl });
+});
+
+// Delete generated audio but keep URL
+app.delete("/api/urls/:index/audio", basicAuth, async (req, res) => {
+  const index = parseInt(req.params.index);
+  const urls = await loadUrls();
+
+  if (index < 0 || index >= urls.length) {
+    return res.status(404).json({ error: "URL not found" });
+  }
+
+  const urlEntry = urls[index];
+  const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
+  const hash = generateHash(url);
+  const audioPath = path.join(DATA_DIR, hash, "text.mp3");
+
+  try {
+    await fs.rm(audioPath, { force: true });
+    delete audioProgress[hash];
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting audio:", error);
+    res.status(500).json({ error: "Failed to delete audio" });
+  }
 });
 
 // Process all URLs
