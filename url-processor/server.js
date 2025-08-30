@@ -483,6 +483,7 @@ async function generateTtsAudio(url, urlDir, textChunks) {
             chunk.level ? ` level ${chunk.level}` : ""
           })`,
         );
+        successfulChunks++;
       } catch {
         // Generate TTS for this chunk
         console.log(
