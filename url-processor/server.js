@@ -10,7 +10,7 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { htmlToText } from "./htmlToText.js";
+import { htmlToText, chunksToHtml } from "./htmlToText.js";
 
 dotenv.config();
 
@@ -32,12 +32,9 @@ const cleanKokoroUrl = KOKORO_API_URL.replace(/\/$/, "");
 // titleSilenceBefore/After: additional silence when transitioning
 //   to and from title (heading) chunks
 const AUDIO_CONFIG = {
-  paragraphSilence:
-    parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2,
-  titleSilenceBefore:
-    parseFloat(process.env.AUDIO_TITLE_SILENCE_BEFORE) || 0.5,
-  titleSilenceAfter:
-    parseFloat(process.env.AUDIO_TITLE_SILENCE_AFTER) || 0.5,
+  paragraphSilence: parseFloat(process.env.AUDIO_SILENCE_DURATION) || 0.2,
+  titleSilenceBefore: parseFloat(process.env.AUDIO_TITLE_SILENCE_BEFORE) || 0.5,
+  titleSilenceAfter: parseFloat(process.env.AUDIO_TITLE_SILENCE_AFTER) || 0.5,
 };
 
 // Initialize OpenAI client for Kokoro TTS
@@ -654,7 +651,10 @@ async function concatenateAudioWithSilence(
     async function getSilenceFile(duration) {
       const key = duration.toFixed(3);
       if (!silenceFiles.has(key)) {
-        const silencePath = path.join(tempDir, `silence-${key}-${timestamp}.mp3`);
+        const silencePath = path.join(
+          tempDir,
+          `silence-${key}-${timestamp}.mp3`,
+        );
         await execAsync(
           `ffmpeg -f lavfi -i anullsrc=channel_layout=mono:sample_rate=22050 -t ${duration} -y "${silencePath}"`,
         );
@@ -680,7 +680,8 @@ async function concatenateAudioWithSilence(
           const nextType = chunkMetadata[i + 1]?.type;
 
           if (currentType === "h") duration = titleSilenceAfter;
-          if (nextType === "h") duration = Math.max(duration, titleSilenceBefore);
+          if (nextType === "h")
+            duration = Math.max(duration, titleSilenceBefore);
 
           const silencePath = await getSilenceFile(duration);
           fileListContent.push(`file '${silencePath}'`);
@@ -698,8 +699,7 @@ async function concatenateAudioWithSilence(
 
     // Concatenate using ffmpeg and re-encode for broader compatibility
     const absoluteOutputPath = path.resolve(outputPath);
-    const ffmpegCommand =
-      `ffmpeg -f concat -safe 0 -i "${fileListPath}" -acodec libmp3lame -ar 22050 -ac 1 -y "${absoluteOutputPath}"`;
+    const ffmpegCommand = `ffmpeg -f concat -safe 0 -i "${fileListPath}" -acodec libmp3lame -ar 22050 -ac 1 -y "${absoluteOutputPath}"`;
     await execAsync(ffmpegCommand);
 
     // Clean up temporary files
@@ -1004,8 +1004,8 @@ app.get("/api/processed/:hash", basicAuth, async (req, res) => {
       article,
       textChunks: textData?.chunks || [],
       // Maintain backward compatibility
-      text: textData?.chunks
-        ? textData.chunks.map((chunk) => chunk.text).join(" ")
+      textHTML: textData?.chunks
+        ? chunksToHtml(textData.chunks)
         : textData?.text || "",
       audioAvailable: audioExists,
     });
@@ -1066,12 +1066,14 @@ app.get("/api/status-all", basicAuth, async (req, res) => {
 app.get("/api/audio/:hash", basicAuth, async (req, res) => {
   const { hash } = req.params;
   const audioPath = path.join(DATA_DIR, hash, "text.mp3");
+  const absoluteAudioPath = path.resolve(audioPath);
 
   try {
-    await fs.access(audioPath);
+    await fs.access(absoluteAudioPath);
     res.setHeader("Content-Type", "audio/mpeg");
-    res.sendFile(audioPath);
+    res.sendFile(absoluteAudioPath);
   } catch (error) {
+    console.error(`Audio file not found: ${absoluteAudioPath}`, error);
     res.status(404).json({ error: "Audio file not found" });
   }
 });
