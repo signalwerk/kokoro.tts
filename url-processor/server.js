@@ -405,13 +405,7 @@ app.get("/rss", basicAuth, async (req, res) => {
             title,
             processedAt: info.processedAt,
             addedAt: typeof urlEntry === "object" ? urlEntry.addedAt : null,
-            description: textData.chunks
-              ? textData.chunks
-                  .slice(0, 3)
-                  .map((chunk) => chunk.text)
-                  .join(" ")
-                  .substring(0, 200) + "..."
-              : "",
+            description: textData.chunks ? chunksToHtml(textData.chunks) : "",
           });
         } catch (error) {
           console.error("Error reading info for", url, error);
@@ -433,7 +427,7 @@ app.get("/rss", basicAuth, async (req, res) => {
     const rssXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
-    <title>Kokoro TTS - Web Content Audio</title>
+    <title>Private Podcast Stream of Stefan Huber</title>
     <description>Text-to-speech audio content generated from web articles using Kokoro TTS</description>
     <link>${baseUrl}</link>
     <language>en-us</language>
@@ -449,7 +443,7 @@ app.get("/rss", basicAuth, async (req, res) => {
     </itunes:owner>
     <image>
       <url>${coverImageUrl}</url>
-      <title>Kokoro TTS - Web Content Audio</title>
+      <title>Private Podcast Stream of Stefan Huber</title>
       <link>${baseUrl}</link>
     </image>
 ${completedUrls
