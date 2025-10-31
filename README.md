@@ -28,6 +28,7 @@ A text-to-speech system that converts web content into audio. Add URLs or HTML c
    ```
 
 3. Access the web interface:
+
    - URL Processor UI: http://localhost:8543
    - Kokoro TTS API: http://localhost:8542
 
@@ -35,8 +36,7 @@ A text-to-speech system that converts web content into audio. Add URLs or HTML c
    - **URL mode**: Enter a web URL to fetch and process
    - **HTML mode**: Paste HTML content directly for processing
    - **Optional**: Add a comment to help organize your entries
-
-   The system will automatically process entries into audio files
+     The system will automatically process entries into audio files
 
 ## Data Storage
 

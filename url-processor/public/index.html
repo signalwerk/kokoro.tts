@@ -497,6 +497,7 @@
             placeholder="Paste HTML content here..."
             rows="6"
             style="flex: 1; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; font-family: monospace; resize: vertical;"
+            onpaste="handleHtmlPaste(event)"
           ></textarea>
         </div>
         <div class="input-group" id="htmlButtonGroup" style="display: none;">
@@ -574,6 +575,37 @@
           urlInputGroup.style.display = "none";
           htmlInputGroup.style.display = "flex";
           htmlButtonGroup.style.display = "flex";
+        }
+      }
+
+      // Handle paste event to prioritize text/html over text/plain
+      function handleHtmlPaste(event) {
+        const clipboardData = event.clipboardData || window.clipboardData;
+        
+        // Check if HTML content is available
+        const htmlContent = clipboardData.getData('text/html');
+        
+        if (htmlContent && htmlContent.trim()) {
+          // Prevent default paste behavior
+          event.preventDefault();
+          
+          // Insert HTML content at cursor position
+          const textarea = event.target;
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const text = textarea.value;
+          
+          textarea.value = text.substring(0, start) + htmlContent + text.substring(end);
+          
+          // Move cursor to end of pasted content
+          const newPosition = start + htmlContent.length;
+          textarea.selectionStart = newPosition;
+          textarea.selectionEnd = newPosition;
+          
+          console.log('Pasted HTML content (length:', htmlContent.length, ')');
+        } else {
+          // Let default behavior handle text/plain
+          console.log('Pasted plain text (no HTML available)');
         }
       }
 

@@ -20,6 +20,7 @@ A Node.js service that processes URLs and HTML content, converting them to speec
    - **URL Mode**: Enter a web URL - the service will fetch the content
    - **HTML Mode**: Paste HTML directly - skips the fetching step
    - **Comment** (optional): Add a note to help organize your entries
+
 2. Service creates a unique hash for each entry (based on URL or HTML content)
 
 3. For each entry, creates a folder `/kokoro/data/${hash}/` containing:
