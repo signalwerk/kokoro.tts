@@ -40,9 +40,23 @@
         display: flex;
         gap: 10px;
         margin-bottom: 15px;
+        align-items: center;
       }
 
-      input[type="url"] {
+      .input-group label {
+        cursor: pointer;
+        font-size: 16px;
+        user-select: none;
+      }
+
+      .input-group input[type="radio"] {
+        cursor: pointer;
+        width: 18px;
+        height: 18px;
+      }
+
+      input[type="url"],
+      input[type="text"] {
         flex: 1;
         padding: 12px;
         border: 2px solid #ddd;
@@ -50,7 +64,9 @@
         font-size: 16px;
       }
 
-      input[type="url"]:focus {
+      input[type="url"]:focus,
+      input[type="text"]:focus,
+      textarea:focus {
         outline: none;
         border-color: #007bff;
       }
@@ -442,11 +458,49 @@
       <div class="input-section">
         <div class="input-group">
           <input
+            type="text"
+            id="commentInput"
+            placeholder="Comment (optional)"
+            style="flex: 0.5;"
+          />
+        </div>
+        <div class="input-group">
+          <input
+            type="radio"
+            id="urlMode"
+            name="inputMode"
+            value="url"
+            checked
+            onchange="toggleInputMode()"
+          />
+          <label for="urlMode" style="margin-right: 15px;">URL</label>
+          <input
+            type="radio"
+            id="htmlMode"
+            name="inputMode"
+            value="html"
+            onchange="toggleInputMode()"
+          />
+          <label for="htmlMode">HTML</label>
+        </div>
+        <div class="input-group" id="urlInputGroup">
+          <input
             type="url"
             id="urlInput"
             placeholder="Enter URL (e.g., https://example.com)"
           />
           <button onclick="addUrl()" id="addBtn">Add URL</button>
+        </div>
+        <div class="input-group" id="htmlInputGroup" style="display: none;">
+          <textarea
+            id="htmlInput"
+            placeholder="Paste HTML content here..."
+            rows="6"
+            style="flex: 1; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; font-family: monospace; resize: vertical;"
+          ></textarea>
+        </div>
+        <div class="input-group" id="htmlButtonGroup" style="display: none;">
+          <button onclick="addHtml()" id="addHtmlBtn" style="width: 100%;">Add HTML</button>
         </div>
         <button
           onclick="processAll()"
@@ -504,6 +558,24 @@
         renderRssInfo(); // Render RSS info immediately with calculated URL
         startStatusPolling();
       };
+
+      // Toggle between URL and HTML input modes
+      function toggleInputMode() {
+        const urlMode = document.getElementById("urlMode").checked;
+        const urlInputGroup = document.getElementById("urlInputGroup");
+        const htmlInputGroup = document.getElementById("htmlInputGroup");
+        const htmlButtonGroup = document.getElementById("htmlButtonGroup");
+
+        if (urlMode) {
+          urlInputGroup.style.display = "flex";
+          htmlInputGroup.style.display = "none";
+          htmlButtonGroup.style.display = "none";
+        } else {
+          urlInputGroup.style.display = "none";
+          htmlInputGroup.style.display = "flex";
+          htmlButtonGroup.style.display = "flex";
+        }
+      }
 
       // Clean up when page is closed
       window.onbeforeunload = function () {
@@ -584,7 +656,9 @@
       // Add new URL
       async function addUrl() {
         const urlInput = document.getElementById("urlInput");
+        const commentInput = document.getElementById("commentInput");
         const url = urlInput.value.trim();
+        const comment = commentInput.value.trim();
 
         if (!url) {
           showStatus("Please enter a URL", "error");
@@ -597,13 +671,14 @@
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ url }),
+            body: JSON.stringify({ url, comment }),
           });
 
           const result = await response.json();
 
           if (response.ok) {
             urlInput.value = "";
+            commentInput.value = "";
             showStatus(
               "URL added successfully! Processing will start automatically.",
               "success",
@@ -617,6 +692,48 @@
           }
         } catch (error) {
           showStatus("Error adding URL: " + error.message, "error");
+        }
+      }
+
+      // Add HTML content directly
+      async function addHtml() {
+        const htmlInput = document.getElementById("htmlInput");
+        const commentInput = document.getElementById("commentInput");
+        const html = htmlInput.value.trim();
+        const comment = commentInput.value.trim();
+
+        if (!html) {
+          showStatus("Please enter HTML content", "error");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/html", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ html, comment }),
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            htmlInput.value = "";
+            commentInput.value = "";
+            showStatus(
+              "HTML added successfully! Processing will start automatically.",
+              "success",
+            );
+            await loadUrls();
+
+            // Immediately start tracking status for new entry
+            await updateAllStatuses();
+          } else {
+            showStatus("Error: " + result.error, "error");
+          }
+        } catch (error) {
+          showStatus("Error adding HTML: " + error.message, "error");
         }
       }
 
@@ -1027,6 +1144,10 @@
             const url = typeof urlEntry === "string" ? urlEntry : urlEntry.url;
             const addedAt =
               typeof urlEntry === "object" ? urlEntry.addedAt : null;
+            const comment =
+              typeof urlEntry === "object" ? urlEntry.comment : null;
+            const isHtmlEntry =
+              typeof urlEntry === "object" ? urlEntry.isHtml : false;
 
             const status = urlStatuses[url] || {
               status: "not_started",
@@ -1043,11 +1164,21 @@
               ? new Date(addedAt).toLocaleString()
               : "Unknown";
 
+            // Create comment display if it exists
+            const commentDisplay = comment
+              ? `<div style="font-size: 12px; color: #555; margin-top: 5px; font-style: italic;">💬 ${escapeHtml(comment)}</div>`
+              : "";
+
+            // Show type indicator
+            const typeIndicator = isHtmlEntry ? "📄 HTML" : "🔗 URL";
+
             return `
                     <div class="url-item">
                         <div class="url-content">
                             <div class="url-text">${url}</div>
+                            ${commentDisplay}
                             <div class="url-meta">
+                                <span>${typeIndicator}</span>
                                 <span>📅 Added: ${addedDateStr}</span>
                             </div>
                             <div class="url-status">

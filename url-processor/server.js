@@ -138,7 +138,7 @@ app.get("/api/urls", basicAuth, async (req, res) => {
 
 // Add new URL
 app.post("/api/urls", basicAuth, async (req, res) => {
-  const { url } = req.body;
+  const { url, comment } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: "URL is required" });
@@ -163,11 +163,16 @@ app.post("/api/urls", basicAuth, async (req, res) => {
     return res.status(400).json({ error: "URL already exists" });
   }
 
-  // Add URL with timestamp
+  // Add URL with timestamp and optional comment
   const urlEntry = {
     url: trimmedUrl,
     addedAt: new Date().toISOString(),
+    isHtml: false,
   };
+
+  if (comment && comment.trim()) {
+    urlEntry.comment = comment.trim();
+  }
 
   urls.push(urlEntry);
   await saveUrls(urls);
@@ -178,6 +183,54 @@ app.post("/api/urls", basicAuth, async (req, res) => {
   });
 
   res.json({ success: true, url: trimmedUrl, addedAt: urlEntry.addedAt });
+});
+
+// Add HTML content directly
+app.post("/api/html", basicAuth, async (req, res) => {
+  const { html, comment } = req.body;
+
+  if (!html || !html.trim()) {
+    return res.status(400).json({ error: "HTML content is required" });
+  }
+
+  const trimmedHtml = html.trim();
+
+  // Generate a unique identifier based on HTML content
+  const hash = generateHash(trimmedHtml);
+  const pseudoUrl = `html://${hash}`;
+
+  const urls = await loadUrls();
+
+  // Check if this HTML content already exists
+  const urlExists = urls.some((item) => {
+    const existingUrl = typeof item === "string" ? item : item.url;
+    return existingUrl === pseudoUrl;
+  });
+
+  if (urlExists) {
+    return res.status(400).json({ error: "This HTML content already exists" });
+  }
+
+  // Add HTML entry with timestamp and optional comment
+  const urlEntry = {
+    url: pseudoUrl,
+    addedAt: new Date().toISOString(),
+    isHtml: true,
+  };
+
+  if (comment && comment.trim()) {
+    urlEntry.comment = comment.trim();
+  }
+
+  urls.push(urlEntry);
+  await saveUrls(urls);
+
+  // Process HTML directly in background
+  processHtml(pseudoUrl, trimmedHtml).then((result) => {
+    console.log("Processing result:", result);
+  });
+
+  res.json({ success: true, url: pseudoUrl, addedAt: urlEntry.addedAt });
 });
 
 // Delete URL
@@ -1188,6 +1241,87 @@ async function processUrl(url) {
     };
   } catch (error) {
     console.error(`Error processing URL ${url}:`, error);
+    return { success: false, message: error.message, hash };
+  }
+}
+
+// Process HTML content directly (without fetching from URL)
+async function processHtml(pseudoUrl, htmlContent) {
+  const hash = generateHash(pseudoUrl);
+  const urlDir = path.join(DATA_DIR, hash);
+
+  try {
+    // Step 1: Store URL info
+    await fs.mkdir(urlDir, { recursive: true });
+    const infoPath = path.join(urlDir, "info.json");
+    await fs.writeFile(
+      infoPath,
+      JSON.stringify(
+        { url: pseudoUrl, processedAt: new Date().toISOString() },
+        null,
+        2,
+      ),
+    );
+
+    // Step 2: Store HTML content directly
+    const htmlPath = path.join(urlDir, "html.json");
+    const htmlData = {
+      content: htmlContent,
+      headers: {},
+      status: 200,
+    };
+    await fs.writeFile(htmlPath, JSON.stringify(htmlData, null, 2));
+
+    // Step 3: Process with Readability
+    const readabilityResult = await processWithReadability(
+      pseudoUrl,
+      urlDir,
+      htmlContent,
+    );
+    if (!readabilityResult.success) {
+      return {
+        success: false,
+        message: `Failed at step 3: ${readabilityResult.error}`,
+        hash,
+      };
+    }
+
+    // Step 4: Convert to text
+    const textResult = await convertToText(
+      pseudoUrl,
+      urlDir,
+      readabilityResult.article,
+    );
+    if (!textResult.success) {
+      return {
+        success: false,
+        message: `Failed at step 4: ${textResult.error}`,
+        hash,
+      };
+    }
+
+    // Step 5: Generate TTS audio
+    const ttsResult = await generateTtsAudio(
+      pseudoUrl,
+      urlDir,
+      textResult.textChunks,
+    );
+    if (!ttsResult.success) {
+      return {
+        success: false,
+        message: `Failed at step 5: ${ttsResult.error}`,
+        hash,
+      };
+    }
+
+    console.log(`Successfully processed HTML: ${pseudoUrl}`);
+    return {
+      success: true,
+      message: "HTML processed successfully",
+      hash,
+    };
+  } catch (error) {
+    console.error(`Error processing HTML ${pseudoUrl}:`, error);
     return { success: false, message: error.message, hash };
   }
 }

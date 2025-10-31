@@ -1,11 +1,13 @@
 # URL Processor & Text-to-Speech Service
 
-A Node.js service that processes URLs and converts their content to speech using the Kokoro TTS API.
+A Node.js service that processes URLs and HTML content, converting them to speech using the Kokoro TTS API.
 
 ## Features
 
-- **Web UI**: Simple interface to manage URLs
-- **URL Processing**: Automatically extracts and processes web content
+- **Web UI**: Simple interface to manage URLs and HTML content
+- **URL Processing**: Automatically fetches and processes web content
+- **Direct HTML Input**: Paste HTML content directly for processing without fetching
+- **Comments**: Add optional comments to organize your entries
 - **Content Extraction**: Uses Mozilla Readability for clean content extraction
 - **Text-to-Speech**: Converts extracted text to MP3 audio using Kokoro TTS
 - **Audio Concatenation**: Professional audio concatenation with silence gaps using ffmpeg
@@ -14,10 +16,14 @@ A Node.js service that processes URLs and converts their content to speech using
 
 ## How it works
 
-1. Add URLs through the web interface
-2. Service creates a unique hash for each URL
-3. For each URL, creates a folder `/kokoro/data/${hash}/` containing:
-   - `info.json` - URL and processing metadata
+1. Add content through the web interface:
+   - **URL Mode**: Enter a web URL - the service will fetch the content
+   - **HTML Mode**: Paste HTML directly - skips the fetching step
+   - **Comment** (optional): Add a note to help organize your entries
+2. Service creates a unique hash for each entry (based on URL or HTML content)
+
+3. For each entry, creates a folder `/kokoro/data/${hash}/` containing:
+   - `info.json` - URL/identifier and processing metadata
    - `html.json` - Original HTML content and headers
    - `content.json` - Cleaned content via Mozilla Readability
    - `text.json` - Plain text extracted from HTML with chunk metadata
@@ -40,14 +46,15 @@ The service uses ffmpeg for professional audio concatenation:
 ## API Endpoints
 
 - `GET /` - Web UI
-- `GET /api/urls` - Get all URLs
-- `POST /api/urls` - Add new URL
-- `DELETE /api/urls/:index` - Delete URL
-- `DELETE /api/urls/:index/audio` - Delete generated audio for URL
-- `POST /api/process-all` - Process all URLs
+- `GET /api/urls` - Get all URLs/HTML entries
+- `POST /api/urls` - Add new URL (body: `{ url: string, comment?: string }`)
+- `POST /api/html` - Add HTML content directly (body: `{ html: string, comment?: string }`)
+- `DELETE /api/urls/:index` - Delete URL/HTML entry
+- `DELETE /api/urls/:index/audio` - Delete generated audio for entry
+- `POST /api/process-all` - Process all entries
 - `GET /api/processed/:hash` - Get processed content
-- `GET /api/status/:hash` - Get processing status for URL
-- `GET /api/status-all` - Get status for all URLs
+- `GET /api/status/:hash` - Get processing status for entry
+- `GET /api/status-all` - Get status for all entries
 - `GET /api/audio/:hash` - Download audio file
 
 ## Usage
@@ -60,9 +67,13 @@ The service uses ffmpeg for professional audio concatenation:
 
 2. Access the web UI at: http://localhost:8543
 
-3. Add URLs and they will be processed automatically
-4. Monitor progress through the status endpoints
-5. Download generated audio files
+3. Add content to process:
+   - **URL Mode** (default): Enter a web URL to fetch and process
+   - **HTML Mode**: Select HTML mode, paste HTML content directly
+   - **Comment**: Optionally add a comment to help organize entries
+4. Content will be processed automatically through all stages
+5. Monitor progress through the web UI or status endpoints
+6. Download or stream generated audio files
 
 ## Environment Variables
 
@@ -80,8 +91,8 @@ All processed data is stored in `/kokoro/data/` with the following structure:
 
 ```
 /kokoro/data/
-├── urls.json (list of all URLs)
-└── ${hash}/ (one folder per URL)
+├── urls.json (list of all entries with metadata)
+└── ${hash}/ (one folder per entry)
     ├── info.json
     ├── html.json
     ├── content.json
@@ -91,6 +102,15 @@ All processed data is stored in `/kokoro/data/` with the following structure:
         ├── ${chunk_hash}.mp3
         └── ...
 ```
+
+### Entry Format in urls.json
+
+Each entry in `urls.json` is an object containing:
+
+- `url`: The URL or pseudo-URL identifier (e.g., `html://hash` for HTML entries)
+- `addedAt`: ISO timestamp when entry was added
+- `isHtml`: Boolean flag indicating if this is direct HTML input
+- `comment`: Optional comment text for organizing entries
 
 ## Development
 
